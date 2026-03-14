@@ -1,5 +1,5 @@
 import { Box, Text, useApp, useInput } from "ink";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createDaemonClient,
   type DiagnosticsResponse,
@@ -15,6 +15,12 @@ interface TranscriptEntry {
   id: string;
   role: TranscriptRole;
   content: string;
+}
+
+interface TranscriptLine {
+  key: string;
+  role: TranscriptRole;
+  text: string;
 }
 
 const FOCUS_ORDER: FocusPane[] = ["workers", "transcript", "inspector", "composer"];
@@ -149,6 +155,14 @@ function nextFocus(current: FocusPane): FocusPane {
   return FOCUS_ORDER[(index + 1) % FOCUS_ORDER.length] ?? "composer";
 }
 
+function shouldDeferPolling(state: {
+  focus: FocusPane;
+  composer: string;
+  sending: boolean;
+}): boolean {
+  return !state.sending && state.focus === "composer" && state.composer.length > 0;
+}
+
 function appendTranscriptEntry(
   setEntries: React.Dispatch<React.SetStateAction<TranscriptEntry[]>>,
   entry: TranscriptEntry,
@@ -182,6 +196,132 @@ function Pane({
   );
 }
 
+const DashboardPanels = memo(function DashboardPanels({
+  focus,
+  workers,
+  selectedWorkerId,
+  leftWidth,
+  rightWidth,
+  transcriptLines,
+  diagnosticsLines,
+}: {
+  focus: FocusPane;
+  workers: WorkerSummary[];
+  selectedWorkerId: string | null;
+  leftWidth: number;
+  rightWidth: number;
+  transcriptLines: TranscriptLine[];
+  diagnosticsLines: string[];
+}): JSX.Element {
+  return (
+    <Box flexGrow={1}>
+      <Pane title={`Workers (${workers.length})`} focused={focus === "workers"} width={leftWidth}>
+        {workers.length === 0 ? (
+          <Text dimColor>No active workers.</Text>
+        ) : (
+          workers.map((worker, index) => {
+            const selected = worker.id === selectedWorkerId;
+            const marker = selected ? ">" : " ";
+            const detail = trimToSingleLine(worker.workingDir, Math.max(10, leftWidth - 6));
+            return (
+              <Box key={worker.id} flexDirection="column" marginBottom={index === workers.length - 1 ? 0 : 1}>
+                <Text color={selected ? "cyan" : workerStatusColor(worker.status)}>
+                  {marker} {worker.name} [{worker.status}]
+                </Text>
+                <Text dimColor>{detail}</Text>
+              </Box>
+            );
+          })
+        )}
+      </Pane>
+
+      <Box width={1} />
+
+      <Pane title="Transcript" focused={focus === "transcript"}>
+        {transcriptLines.map((line) => (
+          <Text key={line.key} color={transcriptColor(line.role)}>
+            {line.text}
+          </Text>
+        ))}
+      </Pane>
+
+      <Box width={1} />
+
+      <Pane title="Inspector" focused={focus === "inspector"} width={rightWidth}>
+        {diagnosticsLines.map((line, index) => (
+          <Text key={`${index}-${line}`} dimColor={line.trim() === ""}>
+            {line}
+          </Text>
+        ))}
+      </Pane>
+    </Box>
+  );
+});
+
+const ComposerPane = memo(function ComposerPane({
+  focus,
+  connectionState,
+  statusMessage,
+  onSubmit,
+  onDraftChange,
+}: {
+  focus: FocusPane;
+  connectionState: ConnectionState;
+  statusMessage: string;
+  onSubmit: (prompt: string) => Promise<boolean>;
+  onDraftChange: (draft: string) => void;
+}): JSX.Element {
+  const [draft, setDraft] = useState("");
+
+  useEffect(() => {
+    onDraftChange(draft);
+  }, [draft, onDraftChange]);
+
+  useInput((input, key) => {
+    if (focus !== "composer") {
+      return;
+    }
+
+    if (key.return) {
+      void onSubmit(draft).then((shouldClear) => {
+        if (shouldClear) {
+          setDraft("");
+        }
+      });
+      return;
+    }
+
+    if (key.backspace || key.delete) {
+      setDraft((current) => current.slice(0, -1));
+      return;
+    }
+
+    if (key.ctrl || key.meta || key.tab || key.escape) {
+      return;
+    }
+
+    if (input.length > 0) {
+      setDraft((current) => current + input);
+    }
+  });
+
+  return (
+    <Box marginTop={1}>
+      <Pane title={`Composer${focus === "composer" ? " [focused]" : ""}`} focused={focus === "composer"}>
+        <Text color={connectionState === "connected" ? "green" : connectionState === "connecting" ? "yellow" : "red"}>
+          {connectionState === "connected" ? "● connected" : connectionState === "connecting" ? "● connecting" : "● disconnected"}
+        </Text>
+        <Text>
+          {"> "} {draft}
+          {focus === "composer" ? "█" : ""}
+        </Text>
+        <Text dimColor>{statusMessage}</Text>
+        <Text dimColor>Tab focus • ↑/↓ select worker • Esc cancel • Enter send • q/Ctrl+C quit • legacy: attache tui:legacy</Text>
+      </Pane>
+    </Box>
+  );
+});
+
 export function InkShellApp(): JSX.Element {
   const { exit } = useApp();
   const client = useMemo(() => createDaemonClient(), []);
@@ -194,7 +334,6 @@ export function InkShellApp(): JSX.Element {
   const [diagnostics, setDiagnostics] = useState<DiagnosticsResponse | null>(null);
   const [connectionState, setConnectionState] = useState<ConnectionState>("connecting");
   const [connectionId, setConnectionId] = useState<string | null>(null);
-  const [composer, setComposer] = useState("");
   const [entries, setEntries] = useState<TranscriptEntry[]>([]);
   const [streamingContent, setStreamingContent] = useState("");
   const [statusMessage, setStatusMessage] = useState("Connecting to daemon…");
@@ -203,6 +342,19 @@ export function InkShellApp(): JSX.Element {
 
   const activeMessageRef = useRef(false);
   const visibleActivityRef = useRef(false);
+  const pollingStateRef = useRef({
+    focus: "composer" as FocusPane,
+    composer: "",
+    sending: false,
+  });
+
+  useEffect(() => {
+    pollingStateRef.current = {
+      focus,
+      composer: pollingStateRef.current.composer,
+      sending,
+    };
+  }, [focus, sending]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -242,13 +394,19 @@ export function InkShellApp(): JSX.Element {
     let cancelled = false;
 
     const refresh = async () => {
+      // Ink redraws the full layout on each render. While the user is editing
+      // a draft, defer background polling so the composer stays visually stable.
+      if (shouldDeferPolling(pollingStateRef.current)) {
+        return;
+      }
+
       try {
         const [sessionData, diagnosticsData] = await Promise.all([
           client.getJson<WorkerSummary[]>("/sessions"),
           client.getJson<DiagnosticsResponse>("/diagnostics"),
         ]);
 
-        if (cancelled) {
+        if (cancelled || shouldDeferPolling(pollingStateRef.current)) {
           return;
         }
 
@@ -417,7 +575,7 @@ export function InkShellApp(): JSX.Element {
 
   const transcriptLines = useMemo(() => {
     const assistantName = effectiveConfig?.assistantDisplayName ?? client.config.identity.assistantDisplayName;
-    const lines: Array<{ key: string; role: TranscriptRole; text: string }> = [];
+    const lines: TranscriptLine[] = [];
 
     for (const entry of entries) {
       const label = entry.role === "user"
@@ -536,10 +694,17 @@ export function InkShellApp(): JSX.Element {
     setSelectedWorkerId(workers[nextIndex]?.id ?? null);
   };
 
-  const submitPrompt = async () => {
-    const prompt = composer.trim();
+  const handleDraftChange = useCallback((draft: string) => {
+    pollingStateRef.current = {
+      ...pollingStateRef.current,
+      composer: draft,
+    };
+  }, []);
+
+  const submitPrompt = useCallback(async (rawPrompt: string): Promise<boolean> => {
+    const prompt = rawPrompt.trim();
     if (!prompt) {
-      return;
+      return false;
     }
 
     if (!connectionId) {
@@ -548,7 +713,7 @@ export function InkShellApp(): JSX.Element {
         role: "system",
         content: "Not connected to the daemon stream yet. Wait for connection and try again.",
       });
-      return;
+      return false;
     }
 
     const requestId = `user-${Date.now()}`;
@@ -557,28 +722,30 @@ export function InkShellApp(): JSX.Element {
       role: "user",
       content: prompt,
     });
-    setComposer("");
     setStreamingContent("");
     setSending(true);
     activeMessageRef.current = true;
     visibleActivityRef.current = true;
     setStatusMessage("Sending prompt…");
 
-    try {
-      await client.postJson("/message", { prompt, connectionId });
-      setStatusMessage("Prompt queued");
-    } catch (error) {
-      activeMessageRef.current = false;
-      visibleActivityRef.current = false;
-      setSending(false);
-      appendTranscriptEntry(setEntries, {
-        id: `system-${Date.now()}`,
-        role: "system",
-        content: `Failed to send prompt: ${describeError(error)}`,
+    void client.postJson("/message", { prompt, connectionId })
+      .then(() => {
+        setStatusMessage("Prompt queued");
+      })
+      .catch((error) => {
+        activeMessageRef.current = false;
+        visibleActivityRef.current = false;
+        setSending(false);
+        appendTranscriptEntry(setEntries, {
+          id: `system-${Date.now()}`,
+          role: "system",
+          content: `Failed to send prompt: ${describeError(error)}`,
+        });
+        setStatusMessage(`Send failed: ${describeError(error)}`);
       });
-      setStatusMessage(`Send failed: ${describeError(error)}`);
-    }
-  };
+
+    return true;
+  }, [client, connectionId]);
 
   const cancelCurrentMessage = async () => {
     if (!activeMessageRef.current && !sending && !streamingContent) {
@@ -627,86 +794,27 @@ export function InkShellApp(): JSX.Element {
       }
     }
 
-    if (focus !== "composer") {
-      return;
-    }
-
-    if (key.return) {
-      void submitPrompt();
-      return;
-    }
-
-    if (key.backspace || key.delete) {
-      setComposer((current) => current.slice(0, -1));
-      return;
-    }
-
-    if (key.ctrl || key.meta) {
-      return;
-    }
-
-    if (input.length > 0) {
-      setComposer((current) => current + input);
-    }
   });
 
   return (
     <Box flexDirection="column" width="100%" height={Math.max(18, size.rows - 1)}>
-      <Box flexGrow={1}>
-        <Pane title={`Workers (${workers.length})`} focused={focus === "workers"} width={leftWidth}>
-          {workers.length === 0 ? (
-            <Text dimColor>No active workers.</Text>
-          ) : (
-            workers.map((worker, index) => {
-              const selected = worker.id === selectedWorkerId;
-              const marker = selected ? ">" : " ";
-              const detail = trimToSingleLine(worker.workingDir, Math.max(10, leftWidth - 6));
-              return (
-                <Box key={worker.id} flexDirection="column" marginBottom={index === workers.length - 1 ? 0 : 1}>
-                  <Text color={selected ? "cyan" : workerStatusColor(worker.status)}>
-                    {marker} {worker.name} [{worker.status}]
-                  </Text>
-                  <Text dimColor>{detail}</Text>
-                </Box>
-              );
-            })
-          )}
-        </Pane>
+      <DashboardPanels
+        focus={focus}
+        workers={workers}
+        selectedWorkerId={selectedWorkerId}
+        leftWidth={leftWidth}
+        rightWidth={rightWidth}
+        transcriptLines={transcriptLines}
+        diagnosticsLines={diagnosticsLines}
+      />
 
-        <Box width={1} />
-
-        <Pane title="Transcript" focused={focus === "transcript"}>
-          {transcriptLines.map((line) => (
-            <Text key={line.key} color={transcriptColor(line.role)}>
-              {line.text}
-            </Text>
-          ))}
-        </Pane>
-
-        <Box width={1} />
-
-        <Pane title="Inspector" focused={focus === "inspector"} width={rightWidth}>
-          {diagnosticsLines.map((line, index) => (
-            <Text key={`${index}-${line}`} dimColor={line.trim() === ""}>
-              {line}
-            </Text>
-          ))}
-        </Pane>
-      </Box>
-
-      <Box marginTop={1}>
-        <Pane title={`Composer${focus === "composer" ? " [focused]" : ""}`} focused={focus === "composer"}>
-          <Text color={connectionState === "connected" ? "green" : connectionState === "connecting" ? "yellow" : "red"}>
-            {connectionState === "connected" ? "● connected" : connectionState === "connecting" ? "● connecting" : "● disconnected"}
-          </Text>
-          <Text>
-            {"> "} {composer}
-            {focus === "composer" ? "█" : ""}
-          </Text>
-          <Text dimColor>{statusMessage}</Text>
-          <Text dimColor>Tab focus • ↑/↓ select worker • Esc cancel • Enter send • q/Ctrl+C quit • legacy: attache tui:legacy</Text>
-        </Pane>
-      </Box>
+      <ComposerPane
+        focus={focus}
+        connectionState={connectionState}
+        statusMessage={statusMessage}
+        onSubmit={submitPrompt}
+        onDraftChange={handleDraftChange}
+      />
     </Box>
   );
 }
