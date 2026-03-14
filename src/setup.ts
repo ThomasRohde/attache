@@ -1,0 +1,375 @@
+import * as readline from "readline";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { parse as parseDotenv } from "dotenv";
+import { CopilotClient } from "@github/copilot-sdk";
+import {
+  ATTACHE_ENV_PATH,
+  ATTACHE_HOME,
+  ensureHome,
+} from "./paths.js";
+
+const PRODUCT_NAME = "Attache";
+const DEFAULT_ASSISTANT_DISPLAY_NAME = PRODUCT_NAME;
+
+const BOLD = "\x1b[1m";
+const DIM = "\x1b[2m";
+const GREEN = "\x1b[32m";
+const YELLOW = "\x1b[33m";
+const CYAN = "\x1b[36m";
+const RESET = "\x1b[0m";
+
+const FALLBACK_MODELS = [
+  { id: "claude-sonnet-4.6", label: "Claude Sonnet 4.6", desc: "Fast, great for most tasks" },
+  { id: "gpt-5.1", label: "GPT-5.1", desc: "OpenAI's fast model" },
+  { id: "gpt-4.1", label: "GPT-4.1", desc: "Free included model" },
+];
+
+function loadEnvFile(path: string): Record<string, string> {
+  if (!existsSync(path)) return {};
+  return parseDotenv(readFileSync(path, "utf-8"));
+}
+
+function serializeEnvValue(value: string): string {
+  return /^[A-Za-z0-9._/-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function parseStrictPositiveInteger(value: string): number | undefined {
+  if (!/^\d+$/.test(value)) return undefined;
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) return undefined;
+
+  return parsed;
+}
+
+async function fetchModels(): Promise<{ id: string; label: string; desc: string }[]> {
+  let client: CopilotClient | undefined;
+  try {
+    client = new CopilotClient({ autoStart: true });
+    await client.start();
+    const models = await client.listModels();
+    return models
+      .filter((m) => m.policy?.state === "enabled" && !m.name.includes("(Internal only)"))
+      .map((m) => {
+        const mult = m.billing?.multiplier;
+        const desc =
+          mult === 0 || mult === undefined ? "Included with Copilot" : `Premium (${mult}x)`;
+        return { id: m.id, label: m.name, desc };
+      });
+  } catch {
+    return [];
+  } finally {
+    try { await client?.stop(); } catch { /* best-effort */ }
+  }
+}
+
+function ask(rl: readline.Interface, question: string): Promise<string> {
+  return new Promise((resolve) => rl.question(question, resolve));
+}
+
+async function askRequired(rl: readline.Interface, prompt: string): Promise<string> {
+  while (true) {
+    const answer = (await ask(rl, prompt)).trim();
+    if (answer) return answer;
+    console.log(`${YELLOW}  This field is required. Please enter a value.${RESET}`);
+  }
+}
+
+async function askYesNo(
+  rl: readline.Interface,
+  question: string,
+  defaultYes = false,
+): Promise<boolean> {
+  const hint = defaultYes ? "(Y/n)" : "(y/N)";
+  const answer = (await ask(rl, `${question} ${hint} `)).trim().toLowerCase();
+  if (answer === "") return defaultYes;
+  return answer === "y" || answer === "yes";
+}
+
+async function askPicker(
+  rl: readline.Interface,
+  label: string,
+  options: { id: string; label: string; desc: string }[],
+  defaultId: string,
+): Promise<string> {
+  console.log(`${BOLD}${label}${RESET}\n`);
+  const defaultIdx = Math.max(0, options.findIndex((o) => o.id === defaultId));
+  for (let i = 0; i < options.length; i++) {
+    const marker = i === defaultIdx ? `${GREEN}▸${RESET}` : " ";
+    const tag = i === defaultIdx ? ` ${DIM}(default)${RESET}` : "";
+    console.log(`  ${marker} ${CYAN}${i + 1}${RESET}  ${options[i].label}${tag}`);
+    console.log(`       ${DIM}${options[i].desc}${RESET}`);
+  }
+  console.log();
+  const input = await ask(rl, `  Pick a number ${DIM}(1-${options.length}, Enter for default)${RESET}: `);
+  const num = parseStrictPositiveInteger(input.trim());
+  if (num !== undefined && num >= 1 && num <= options.length) return options[num - 1].id;
+  return options[defaultIdx].id;
+}
+
+async function main(): Promise<void> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  const attacheEnv = loadEnvFile(ATTACHE_ENV_PATH);
+  const existing: Record<string, string> = { ...attacheEnv };
+
+  let configHome = ATTACHE_HOME;
+  let envPath = ATTACHE_ENV_PATH;
+
+  console.log(`
+${BOLD}╔══════════════════════════════════════════╗
+║         🧳  Attache Setup                ║
+╚══════════════════════════════════════════╝${RESET}
+`);
+
+  console.log(`${DIM}Config directory: ${configHome}${RESET}\n`);
+
+  // ── What is Attache ───────────────────────────────────────
+  console.log(`${BOLD}Meet ${PRODUCT_NAME}${RESET}`);
+  console.log(`${PRODUCT_NAME} is your personal AI assistant platform — an always-on daemon that runs on`);
+  console.log(`your machine. You can give the assistant its own display name without changing`);
+  console.log(`the stable product identity or runtime paths.`);
+  console.log();
+  console.log(`${CYAN}What ${PRODUCT_NAME} can do out of the box:${RESET}`);
+  console.log(`  • Have conversations and answer questions`);
+  console.log(`  • Spin up Copilot CLI sessions to code, debug, and run commands`);
+  console.log(`  • Manage multiple background tasks simultaneously`);
+  console.log(`  • See and attach to any Copilot session on your machine`);
+  console.log();
+  console.log(`${CYAN}Skills — teach ${PRODUCT_NAME} anything:${RESET}`);
+  console.log(`  ${PRODUCT_NAME} has a skill system that lets it learn new capabilities. There's`);
+  console.log(`  an open source library of community skills it can install, or it can`);
+  console.log(`  write its own from scratch. Just ask it:`);
+  console.log();
+  console.log(`  ${DIM}"Check my email"${RESET}        → ${PRODUCT_NAME} researches how, writes a skill, does it`);
+  console.log(`  ${DIM}"Turn off the lights"${RESET}   → ${PRODUCT_NAME} finds the right CLI tool, learns it`);
+  console.log(`  ${DIM}"Find me a skill for"${RESET}   → ${PRODUCT_NAME} searches community skills and installs one`);
+  console.log(`  ${DIM}"Learn how to use X"${RESET}    → ${PRODUCT_NAME} proactively learns before you need it`);
+  console.log();
+  console.log(`  Skills are saved permanently — ${PRODUCT_NAME} only needs to learn once.`);
+  console.log();
+  console.log(`${CYAN}How to talk to ${PRODUCT_NAME}:${RESET}`);
+  console.log(`  • ${BOLD}Terminal${RESET}  — ${CYAN}attache tui${RESET} — always available, no setup needed`);
+  console.log(`  • ${BOLD}Telegram${RESET} — control your assistant from your phone (optional, set up next)`);
+  console.log();
+
+  await ask(rl, `${DIM}Press Enter to continue...${RESET}`);
+  console.log();
+
+  // ── Assistant display identity ────────────────────────────
+  console.log(`${BOLD}━━━ Assistant Identity ━━━${RESET}\n`);
+  console.log(`${PRODUCT_NAME} stays the product name. This next value is only how your assistant`);
+  console.log(`appears in the UI and conversational text — not a package, path, or API identifier.`);
+  console.log();
+
+  const currentAssistantName =
+    existing.ASSISTANT_DISPLAY_NAME?.trim() || DEFAULT_ASSISTANT_DISPLAY_NAME;
+  const assistantDisplayNameInput = await ask(
+    rl,
+    `  Assistant display name ${DIM}(Enter for ${currentAssistantName})${RESET}: `,
+  );
+  const assistantDisplayName = assistantDisplayNameInput.trim() || currentAssistantName;
+  console.log(`\n${GREEN}  ✓ Your assistant will appear as ${assistantDisplayName}.${RESET}\n`);
+
+  // ── Telegram Setup ───────────────────────────────────────
+  console.log(`${BOLD}━━━ Telegram Setup (optional) ━━━${RESET}\n`);
+  console.log(`Telegram lets you talk to ${assistantDisplayName} from your phone — send messages,`);
+  console.log(`dispatch coding tasks, and get notified when background work finishes.`);
+  console.log();
+
+  let telegramToken = existing.TELEGRAM_BOT_TOKEN || "";
+  let userId = existing.AUTHORIZED_USER_ID || "";
+
+  const setupTelegram = await askYesNo(rl, "Would you like to set up Telegram?");
+
+  if (setupTelegram) {
+    console.log(`\n${BOLD}Step 1: Create a Telegram bot${RESET}\n`);
+    console.log(`  1. Open Telegram and search for ${BOLD}@BotFather${RESET}`);
+    console.log(`  2. Send ${CYAN}/newbot${RESET} and follow the prompts`);
+    console.log(`  3. Copy the bot token (looks like ${DIM}123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11${RESET})`);
+    console.log();
+
+    const tokenInput = await askRequired(
+      rl,
+      `  Bot token${telegramToken ? ` ${DIM}(current: ${telegramToken.slice(0, 12)}...)${RESET}` : ""}: `,
+    );
+    telegramToken = tokenInput;
+
+    console.log(`\n${BOLD}Step 2: Lock down your bot${RESET}\n`);
+    console.log(`${YELLOW}  ⚠  IMPORTANT: Your bot is currently open to anyone on Telegram.${RESET}`);
+    console.log(`  ${assistantDisplayName} uses your Telegram user ID to ensure only YOU can control it.`);
+    console.log(`  Without this, anyone who finds your bot could send it commands.`);
+    console.log();
+    console.log(`  To get your user ID:`);
+    console.log(`  1. Search for ${BOLD}@userinfobot${RESET} on Telegram`);
+    console.log(`  2. Send it any message`);
+    console.log(`  3. It will reply with your user ID (a number like ${DIM}123456789${RESET})`);
+    console.log();
+
+    while (true) {
+      const userIdInput = await askRequired(
+        rl,
+        `  Your user ID${userId ? ` ${DIM}(current: ${userId})${RESET}` : ""}: `,
+      );
+      const parsed = parseStrictPositiveInteger(userIdInput);
+      if (parsed !== undefined) {
+        userId = userIdInput;
+        break;
+      }
+      console.log(`${YELLOW}  That doesn't look like a valid user ID. It should be a positive number.${RESET}`);
+    }
+
+    console.log(`\n${GREEN}  ✓ Telegram locked down — only user ${userId} can control ${assistantDisplayName}.${RESET}`);
+
+    console.log(`\n${BOLD}Step 3: Disable group joins (recommended)${RESET}\n`);
+    console.log(`  For extra security, prevent your bot from being added to groups:`);
+    console.log(`  1. Go back to ${BOLD}@BotFather${RESET}`);
+    console.log(`  2. Send ${CYAN}/mybots${RESET} → select your bot → ${CYAN}Bot Settings${RESET} → ${CYAN}Allow Groups?${RESET}`);
+    console.log(`  3. Set to ${BOLD}Disable${RESET}`);
+    console.log();
+
+    await ask(rl, `  ${DIM}Press Enter when done (or skip)...${RESET}`);
+  } else {
+    console.log(`\n${DIM}  Skipping Telegram. You can always set it up later with: attache setup${RESET}\n`);
+  }
+
+  // ── Google (gogcli) Setup ─────────────────────────────────
+  console.log(`${BOLD}━━━ Google / Gmail Setup (optional) ━━━${RESET}\n`);
+  console.log(`${PRODUCT_NAME} includes a Google skill that lets it read your email, manage`);
+  console.log(`your calendar, access Drive, and more — using the ${BOLD}gog${RESET} CLI.`);
+  console.log();
+
+  const setupGoogle = await askYesNo(rl, "Would you like to set up Google services?");
+
+  if (setupGoogle) {
+    console.log(`\n${BOLD}Step 1: Install the gog CLI${RESET}\n`);
+    console.log(`  ${CYAN}brew install steipete/tap/gogcli${RESET}     ${DIM}(macOS/Linux with Homebrew)${RESET}`);
+    console.log();
+
+    await ask(rl, `  ${DIM}Press Enter when installed (or to skip)...${RESET}`);
+
+    console.log(`\n${BOLD}Step 2: Create OAuth credentials${RESET}\n`);
+    console.log(`  You need a Google Cloud OAuth client to authenticate:`);
+    console.log(`  1. Go to ${CYAN}https://console.cloud.google.com/apis/credentials${RESET}`);
+    console.log(`  2. Create a project (if you don't have one)`);
+    console.log(`  3. Enable the APIs you want (Gmail, Calendar, Drive, etc.)`);
+    console.log(`  4. Configure the OAuth consent screen`);
+    console.log(`  5. Create an OAuth client (type: ${BOLD}Desktop app${RESET})`);
+    console.log(`  6. Download the JSON credentials file`);
+    console.log();
+    console.log(`  Then store the credentials:`);
+    console.log(`  ${CYAN}gog auth credentials ~/Downloads/client_secret_....json${RESET}`);
+    console.log();
+
+    await ask(rl, `  ${DIM}Press Enter when done (or to skip)...${RESET}`);
+
+    console.log(`\n${BOLD}Step 3: Authenticate with your Google account${RESET}\n`);
+    console.log(`  Run this command to authorize:`);
+    console.log(`  ${CYAN}gog auth add your-email@gmail.com${RESET}`);
+    console.log();
+    console.log(`  This opens a browser for OAuth authorization. Once done, ${assistantDisplayName} can`);
+    console.log(`  access your Google services on your behalf.`);
+    console.log();
+
+    const googleEmail = await ask(
+      rl,
+      `  Google email ${DIM}(Enter to skip)${RESET}: `,
+    );
+
+    if (googleEmail.trim()) {
+      console.log(`\n  ${DIM}Run this now or later:${RESET}  ${CYAN}gog auth add ${googleEmail.trim()}${RESET}`);
+      console.log(`  ${DIM}Check status anytime:${RESET}   ${CYAN}gog auth status${RESET}`);
+    }
+
+    console.log(`\n${GREEN}  ✓ Google skill is ready — authenticate with gog auth add when you're set.${RESET}\n`);
+  } else {
+    console.log(`\n${DIM}  Skipping Google. You can always set it up later with: attache setup${RESET}\n`);
+  }
+
+  // ── Model picker ─────────────────────────────────────────
+  console.log(`\n${BOLD}━━━ Default Model ━━━${RESET}\n`);
+  console.log(`${DIM}Fetching available models from Copilot...${RESET}`);
+
+  let models = await fetchModels();
+  if (models.length === 0) {
+    console.log(`${YELLOW}  Could not fetch models (Copilot CLI may not be authenticated yet).${RESET}`);
+    console.log(`${DIM}  Showing a curated list — you can switch anytime after setup.${RESET}\n`);
+    models = FALLBACK_MODELS;
+  } else {
+    console.log(`${GREEN}  ✓ Found ${models.length} models${RESET}\n`);
+  }
+
+  console.log(`${DIM}You can switch models anytime by telling ${assistantDisplayName} "switch to gpt-4.1"${RESET}\n`);
+
+  const currentModel = existing.COPILOT_MODEL || "claude-sonnet-4.6";
+  const model = await askPicker(rl, "Choose a default model:", models, currentModel);
+  const modelLabel = models.find((m) => m.id === model)?.label || model;
+  console.log(`\n${GREEN}  ✓ Using ${modelLabel}${RESET}\n`);
+
+  // ── Write config ─────────────────────────────────────────
+  const apiPort = existing.API_PORT || "7777";
+  const nextEnv: Record<string, string> = { ...existing };
+  nextEnv.ASSISTANT_DISPLAY_NAME = assistantDisplayName;
+  nextEnv.API_PORT = apiPort;
+  nextEnv.COPILOT_MODEL = model;
+
+  if (telegramToken) {
+    nextEnv.TELEGRAM_BOT_TOKEN = telegramToken;
+  }
+  if (userId) {
+    nextEnv.AUTHORIZED_USER_ID = userId;
+  }
+
+  ensureHome(configHome);
+
+  const orderedKeys = [
+    "ASSISTANT_DISPLAY_NAME",
+    "TELEGRAM_BOT_TOKEN",
+    "AUTHORIZED_USER_ID",
+    "API_PORT",
+    "COPILOT_MODEL",
+  ];
+  const remainingKeys = Object.keys(nextEnv)
+    .filter((key) => !orderedKeys.includes(key))
+    .sort();
+  const lines = [...orderedKeys, ...remainingKeys]
+    .filter((key, index, keys) => keys.indexOf(key) === index)
+    .map((key) => [key, nextEnv[key]] as const)
+    .filter((entry): entry is [string, string] => !!entry[1])
+    .map(([key, value]) => `${key}=${serializeEnvValue(value)}`);
+
+  writeFileSync(envPath, lines.join("\n") + "\n");
+
+  // ── Done ─────────────────────────────────────────────────
+  console.log(`
+${GREEN}${BOLD}✅ ${PRODUCT_NAME} is ready!${RESET}
+${DIM}Config saved to ${envPath}${RESET}
+${DIM}Assistant display name: ${assistantDisplayName}${RESET}
+${DIM}Primary command: attache${RESET}
+${BOLD}Get started:${RESET}
+
+  ${CYAN}1.${RESET} Make sure Copilot CLI is authenticated:
+     ${BOLD}copilot login${RESET}
+
+  ${CYAN}2.${RESET} Start ${PRODUCT_NAME}:
+     ${BOLD}attache start${RESET}
+
+  ${CYAN}3.${RESET} ${setupTelegram ? "Open Telegram and message your bot!" : "Connect via terminal:"}
+     ${BOLD}${setupTelegram ? "(message your bot on Telegram)" : "attache tui"}${RESET}
+
+${BOLD}Things to try:${RESET}
+
+  ${DIM}"Start working on the auth bug in ~/dev/myapp"${RESET}
+  ${DIM}"What sessions are running?"${RESET}
+  ${DIM}"Find me a skill for checking Gmail"${RESET}
+  ${DIM}"Learn how to control my smart lights"${RESET}
+  ${DIM}"Switch to gpt-4.1"${RESET}
+`);
+
+  rl.close();
+}
+
+main().catch((err) => {
+  console.error("Setup failed:", err);
+  process.exit(1);
+});

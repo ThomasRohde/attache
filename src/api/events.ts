@@ -1,0 +1,95 @@
+import type { RouteResult } from "../copilot/router.js";
+
+export const API_EVENT_SCHEMA_VERSION = 1 as const;
+
+export type ApiEventName =
+  | "session.connected"
+  | "orchestrator.message.delta"
+  | "orchestrator.message.complete"
+  | "orchestrator.message.cancelled";
+
+export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled";
+
+export interface RoutePayload {
+  model: RouteResult["model"];
+  routerMode: RouteResult["routerMode"];
+  tier: RouteResult["tier"];
+  overrideName?: string;
+}
+
+type ConnectedData = { connectionId: string };
+type MessageData = { content: string; route?: RoutePayload };
+type EmptyData = {};
+
+export type ApiEventEnvelope<TData extends Record<string, unknown>> = {
+  schemaVersion: typeof API_EVENT_SCHEMA_VERSION;
+  eventName: ApiEventName;
+  data: TData;
+  type: LegacyApiEventType;
+  emittedAt: string;
+} & TData;
+
+function withEnvelope<TData extends Record<string, unknown>>(
+  eventName: ApiEventName,
+  type: LegacyApiEventType,
+  data: TData,
+): ApiEventEnvelope<TData> {
+  return {
+    schemaVersion: API_EVENT_SCHEMA_VERSION,
+    eventName,
+    data,
+    type,
+    emittedAt: new Date().toISOString(),
+    ...data,
+  } as ApiEventEnvelope<TData>;
+}
+
+export function createConnectedEvent(connectionId: string): ApiEventEnvelope<ConnectedData> {
+  return withEnvelope("session.connected", "connected", { connectionId });
+}
+
+export function createDeltaEvent(content: string): ApiEventEnvelope<MessageData> {
+  return withEnvelope("orchestrator.message.delta", "delta", { content });
+}
+
+export function createCompleteEvent(
+  content: string,
+  route?: RoutePayload,
+): ApiEventEnvelope<MessageData> {
+  return withEnvelope("orchestrator.message.complete", "message", {
+    content,
+    ...(route ? { route } : {}),
+  });
+}
+
+export function createCancelledEvent(): ApiEventEnvelope<EmptyData> {
+  return withEnvelope("orchestrator.message.cancelled", "cancelled", {});
+}
+
+export function encodeSseEvent(event: ApiEventEnvelope<Record<string, unknown>>): string {
+  return `event: ${event.eventName}\ndata: ${JSON.stringify(event)}\n\n`;
+}
+
+export function resolveLegacyEventType(value: unknown): LegacyApiEventType | undefined {
+  if (!value || typeof value !== "object") {
+    return undefined;
+  }
+
+  const candidate = value as { type?: unknown; eventName?: unknown };
+  if (candidate.type === "connected" || candidate.type === "delta" || candidate.type === "message" || candidate.type === "cancelled") {
+    return candidate.type;
+  }
+
+  switch (candidate.eventName) {
+    case "session.connected":
+      return "connected";
+    case "orchestrator.message.delta":
+      return "delta";
+    case "orchestrator.message.complete":
+      return "message";
+    case "orchestrator.message.cancelled":
+      return "cancelled";
+    default:
+      return undefined;
+  }
+}

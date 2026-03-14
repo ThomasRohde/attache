@@ -1,0 +1,61 @@
+{
+  "name": "attache",
+  "version": "1.1.0",
+  "description": "Attache — AI orchestrator powered by the GitHub Copilot SDK for developer workflows",
+  "bin": {
+    "attache": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "skills/",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "daemon": "tsx src/daemon.ts",
+    "tui": "tsx src/ui/ink/index.tsx",
+    "tui:legacy": "tsx src/tui/index.ts",
+    "dev": "tsx --watch src/daemon.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "attache",
+    "copilot",
+    "telegram",
+    "orchestrator",
+    "ai",
+    "cli"
+  ],
+  "author": "Burke Holland",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/burkeholland/attache.git"
+  },
+  "homepage": "https://github.com/burkeholland/attache#readme",
+  "bugs": {
+    "url": "https://github.com/burkeholland/attache/issues"
+  },
+  "type": "module",
+  "dependencies": {
+    "@github/copilot-sdk": "^0.1.26",
+    "better-sqlite3": "^12.6.2",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "grammy": "^1.40.0",
+    "ink": "^5.2.1",
+    "react": "^18.3.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.3.0",
+    "@types/react": "^18.3.28",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
