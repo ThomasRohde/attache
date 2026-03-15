@@ -4,9 +4,17 @@
 <div class="pane">
     <div class="pane-header">Workers</div>
     <div class="pane-body">
+        <div class="orchestrator-btn @(State.SelectedWorkerId is null ? "selected" : "")"
+             @onclick="SelectOrchestrator">
+            <span class="worker-name">
+                <StatusDot Status="@(State.ConnectionState == ConnectionState.Connected ? "connected" : State.ConnectionState == ConnectionState.Connecting ? "connecting" : "disconnected")" />
+                Orchestrator
+            </span>
+        </div>
+
         @if (State.Workers.Count == 0)
         {
-            <div class="empty-state">No active workers</div>
+            <div class="empty-state" style="padding-top: 16px;">No active workers</div>
         }
         else
         {
@@ -31,9 +39,18 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private void SelectOrchestrator()
+    {
+        State.SelectedWorkerId = null;
+        State.WorkerLogs = null;
+        State.NotifyStateChanged();
+    }
+
     private void SelectWorker(string id)
     {
         State.SelectedWorkerId = State.SelectedWorkerId == id ? null : id;
+        if (State.SelectedWorkerId is null)
+            State.WorkerLogs = null;
         State.NotifyStateChanged();
     }
 

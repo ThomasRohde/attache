@@ -24,6 +24,9 @@ export function getDb(): Database.Database {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // Clean up stale worker sessions from previous daemon runs
+    db.exec(`DELETE FROM worker_sessions`);
+
     db.exec(`
       CREATE TABLE IF NOT EXISTS attache_state (
         key TEXT PRIMARY KEY,

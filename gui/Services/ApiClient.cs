@@ -115,6 +115,18 @@ public class ApiClient : IDisposable
         catch { return []; }
     }
 
+    public async Task<string?> GetWorkerLogsAsync(string workerId)
+    {
+        TryLoadToken();
+        try
+        {
+            var json = await _http.GetStringAsync($"/workers/{Uri.EscapeDataString(workerId)}/logs?tail=500");
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("logs", out var logs) ? logs.GetString() : null;
+        }
+        catch { return null; }
+    }
+
     public async Task<string?> GetModelAsync()
     {
         TryLoadToken();

@@ -418,8 +418,8 @@ app.get("/workfolder", (_req: Request, res: Response) => {
   let gitRoot: string | null = null;
 
   try {
-    gitBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd, encoding: "utf-8" }).trim();
-    gitRoot = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf-8" }).trim();
+    gitBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd, encoding: "utf-8", windowsHide: true }).trim();
+    gitRoot = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf-8", windowsHide: true }).trim();
   } catch {
     // Not a git repo
   }

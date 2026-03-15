@@ -135,6 +135,34 @@ html, body {
 }
 
 /* ── Workers Pane ─────────────────────────────────────────── */
+.orchestrator-btn {
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+    transition: background 0.15s;
+}
+
+.orchestrator-btn:hover {
+    background: var(--bg-tertiary);
+}
+
+.orchestrator-btn.selected {
+    background: var(--bg-input);
+    border-left: 3px solid var(--accent);
+    padding-left: 7px;
+}
+
+.orchestrator-btn .worker-name {
+    font-weight: 600;
+    font-size: 13px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
 .worker-card {
     padding: 8px 10px;
     border-radius: 4px;
@@ -323,6 +351,12 @@ html, body {
     border: none;
     border-top: 1px solid var(--border);
     margin: 12px 0;
+}
+
+/* ── Worker Logs ─────────────────────────────────────────── */
+.worker-logs {
+    font-size: 13px;
+    line-height: 1.6;
 }
 
 /* ── Inspector Pane ───────────────────────────────────────── */

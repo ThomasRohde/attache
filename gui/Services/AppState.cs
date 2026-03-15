@@ -19,6 +19,10 @@ public class AppState
     public string? StreamingContent { get; set; }
     public WorkfolderInfo? Workfolder { get; set; }
     public bool IsProcessing { get; set; }
+    public string? WorkerLogs { get; set; }
+
+    /// <summary>True when viewing orchestrator transcript, false when viewing a worker's logs.</summary>
+    public bool ViewingOrchestrator => SelectedWorkerId is null;
 
     public WorkerModel? SelectedWorker =>
         SelectedWorkerId is not null

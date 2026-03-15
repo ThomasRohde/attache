@@ -130,7 +130,7 @@ export function removeSkill(slug: string): { ok: boolean; message: string } {
 
 /** Parse YAML frontmatter from a SKILL.md file. */
 function parseFrontmatter(content: string): { name: string; description: string } {
-  const match = content.match(/^---\n([\s\S]*?)\n---/);
+  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
   if (!match) return { name: "", description: "" };
 
   const frontmatter = match[1];

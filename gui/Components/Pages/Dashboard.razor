@@ -167,6 +167,9 @@
     {
         State.ConnectionState = ConnectionState.Connecting;
         State.StatusMessage = message;
+        State.Workers = [];
+        State.SelectedWorkerId = null;
+        State.WorkerLogs = null;
         InvokeAsync(StateHasChanged);
     }
 

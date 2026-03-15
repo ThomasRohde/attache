@@ -22,7 +22,7 @@ function getLocalVersion(): string {
 /** Run a command asynchronously and return stdout. */
 function execAsync(cmd: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    execCb(cmd, { encoding: "utf-8", timeout: timeoutMs }, (err, stdout) => {
+    execCb(cmd, { encoding: "utf-8", timeout: timeoutMs, windowsHide: true }, (err, stdout) => {
       if (err) return reject(err);
       resolve(stdout.trim());
     });
@@ -76,6 +76,7 @@ export async function performUpdate(): Promise<{ ok: boolean; output: string }> 
       encoding: "utf-8",
       timeout: 60_000,
       stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
     });
     return { ok: true, output: output.trim() };
   } catch (err: any) {
