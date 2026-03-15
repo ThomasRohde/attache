@@ -1,0 +1,41 @@
+@code {
+    [Parameter] public EventCallback OnComplete { get; set; }
+
+    private int _step = 1;
+    private const int TotalSteps = 5;
+    private readonly WizardData _data = new();
+
+    private void Next() { if (_step < TotalSteps) _step++; }
+    private void Back() { if (_step > 1) _step--; }
+}
+
+<div class="wizard">
+    <div class="wizard-card">
+        <div class="wizard-progress">
+            @for (int i = 1; i <= TotalSteps; i++)
+            {
+                var step = i;
+                <span class="wizard-dot @(step == _step ? "active" : step < _step ? "done" : "")"></span>
+            }
+        </div>
+
+        @switch (_step)
+        {
+            case 1:
+                <WelcomeStep OnNext="Next" />
+                break;
+            case 2:
+                <IdentityStep Data="_data" OnBack="Back" OnNext="Next" />
+                break;
+            case 3:
+                <ModelStep Data="_data" OnBack="Back" OnNext="Next" />
+                break;
+            case 4:
+                <TelegramStep Data="_data" OnBack="Back" OnNext="Next" />
+                break;
+            case 5:
+                <CompleteStep Data="_data" OnBack="Back" OnComplete="OnComplete" />
+                break;
+        }
+    </div>
+</div>

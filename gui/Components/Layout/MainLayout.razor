@@ -1,5 +1,13 @@
 @inherits LayoutComponentBase
+@inject AppState State
 
 <div class="app-layout">
-    <AttacheGui.Components.Pages.Dashboard />
+    @if (State.IsFirstRun)
+    {
+        <SetupWizard OnComplete="() => { State.IsFirstRun = false; StateHasChanged(); }" />
+    }
+    else
+    {
+        <AttacheGui.Components.Pages.Dashboard />
+    }
 </div>

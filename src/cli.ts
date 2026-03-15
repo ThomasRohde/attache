@@ -26,7 +26,6 @@ Usage:
 
 Commands:
   start       Start the ${PRODUCT_NAME} daemon (Telegram bot + HTTP API)
-  setup       Interactive first-run configuration
   update      Check for updates and install the latest version
   help        Show this help message
 
@@ -36,7 +35,6 @@ Flags (start):
 Examples:
   ${PRIMARY_COMMAND} start             Start the daemon
   ${PRIMARY_COMMAND} start --self-edit Start with self-edit enabled
-  ${PRIMARY_COMMAND} setup             Configure Telegram token and settings
 
 Package:
   - Updates install the npm package \`${PUBLISHED_PACKAGE_NAME}\`.
@@ -55,9 +53,6 @@ switch (command) {
     await import("./daemon.js");
     break;
   }
-  case "setup":
-    await import("./setup.js");
-    break;
   case "update": {
     const { checkForUpdate, performUpdate } = await import("./update.js");
     const check = await checkForUpdate();

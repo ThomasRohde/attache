@@ -1,0 +1,133 @@
+@inject ApiClient Api
+
+@code {
+    [Parameter] public WizardData Data { get; set; } = default!;
+    [Parameter] public EventCallback OnBack { get; set; }
+    [Parameter] public EventCallback OnComplete { get; set; }
+
+    private bool _daemonReady;
+    private bool _saving;
+    private string? _error;
+    private System.Timers.Timer? _pollTimer;
+
+    protected override void OnInitialized()
+    {
+        _pollTimer = new System.Timers.Timer(1500);
+        _pollTimer.Elapsed += async (_, _) => await PollDaemon();
+        _pollTimer.Start();
+        _ = PollDaemon();
+    }
+
+    private async Task PollDaemon()
+    {
+        var status = await Api.GetStatusAsync();
+        if (status.Running && !_daemonReady)
+        {
+            _daemonReady = true;
+            _pollTimer?.Stop();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task Save()
+    {
+        _saving = true;
+        _error = null;
+        StateHasChanged();
+
+        try
+        {
+            var values = new Dictionary<string, string>
+            {
+                ["ASSISTANT_DISPLAY_NAME"] = string.IsNullOrWhiteSpace(Data.AssistantDisplayName)
+                    ? "Attache"
+                    : Data.AssistantDisplayName.Trim(),
+                ["COPILOT_MODEL"] = Data.CopilotModel,
+            };
+
+            if (!string.IsNullOrWhiteSpace(Data.TelegramBotToken))
+                values["TELEGRAM_BOT_TOKEN"] = Data.TelegramBotToken.Trim();
+            if (!string.IsNullOrWhiteSpace(Data.AuthorizedUserId))
+                values["AUTHORIZED_USER_ID"] = Data.AuthorizedUserId.Trim();
+
+            var configOk = await Api.PostConfigAsync(values);
+            if (!configOk)
+            {
+                _error = "Failed to save configuration. Is the daemon running?";
+                _saving = false;
+                StateHasChanged();
+                return;
+            }
+
+            await Api.PostModelAsync(Data.CopilotModel);
+
+            if (!string.IsNullOrWhiteSpace(Data.TelegramBotToken))
+                await Api.PostRestartAsync();
+
+            await OnComplete.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _error = $"Error: {ex.Message}";
+            _saving = false;
+            StateHasChanged();
+        }
+    }
+
+    public void Dispose()
+    {
+        _pollTimer?.Stop();
+        _pollTimer?.Dispose();
+    }
+}
+
+<div class="wizard-step">
+    <h1>You're All Set!</h1>
+    <p class="wizard-subtitle">Here's a summary of your configuration</p>
+
+    <div class="summary-table">
+        <div class="summary-row">
+            <span class="summary-label">Assistant Name</span>
+            <span class="summary-value">@(string.IsNullOrWhiteSpace(Data.AssistantDisplayName) ? "Attache" : Data.AssistantDisplayName)</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">Default Model</span>
+            <span class="summary-value">@Data.CopilotModel</span>
+        </div>
+        <div class="summary-row">
+            <span class="summary-label">Telegram</span>
+            <span class="summary-value">
+                @(string.IsNullOrWhiteSpace(Data.TelegramBotToken) ? "Not configured" : "Configured")
+            </span>
+        </div>
+    </div>
+
+    @if (_error is not null)
+    {
+        <div class="wizard-error">@_error</div>
+    }
+
+    @if (!_daemonReady)
+    {
+        <div class="wizard-waiting">
+            <span class="status-dot connecting"></span>
+            Starting Attache daemon...
+        </div>
+    }
+
+    <div class="wizard-nav">
+        <button class="btn btn-secondary" @onclick="OnBack" disabled="@_saving">Back</button>
+        <button class="btn btn-primary" @onclick="Save" disabled="@(!_daemonReady || _saving)">
+            @if (_saving)
+            {
+                <span>Saving...</span>
+            }
+            else
+            {
+                <span>Get Started</span>
+            }
+        </button>
+    </div>
+</div>
+
+@implements IDisposable

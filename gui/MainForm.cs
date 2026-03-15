@@ -25,8 +25,9 @@ public partial class MainForm : Form
     public MainForm()
     {
         Text = "Attache";
-        Width = 1280;
-        Height = 800;
+        var workArea = Screen.PrimaryScreen!.WorkingArea;
+        Width = Math.Max(1280, (int)(workArea.Width * 0.8));
+        Height = Math.Max(800, (int)(workArea.Height * 0.8));
         MinimumSize = new Size(900, 600);
         StartPosition = FormStartPosition.CenterScreen;
         BackColor = Color.FromArgb(30, 30, 30);

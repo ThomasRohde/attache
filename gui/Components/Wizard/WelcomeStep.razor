@@ -1,0 +1,37 @@
+@code {
+    [Parameter] public EventCallback OnNext { get; set; }
+}
+
+<div class="wizard-step">
+    <h1>Welcome to Attache</h1>
+    <p class="wizard-subtitle">Your personal AI coding assistant</p>
+
+    <div class="welcome-features">
+        <div class="feature-item">
+            <span class="feature-icon">&#x2728;</span>
+            <div>
+                <strong>AI-Powered Coding</strong>
+                <p>Manages Copilot sessions to code, debug, and run commands in your projects</p>
+            </div>
+        </div>
+        <div class="feature-item">
+            <span class="feature-icon">&#x1F4AC;</span>
+            <div>
+                <strong>Multi-Channel</strong>
+                <p>Chat from this desktop app or connect Telegram for mobile control</p>
+            </div>
+        </div>
+        <div class="feature-item">
+            <span class="feature-icon">&#x1F9E0;</span>
+            <div>
+                <strong>Learns &amp; Remembers</strong>
+                <p>Skill system lets it learn new capabilities permanently</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="wizard-nav">
+        <div></div>
+        <button class="btn btn-primary" @onclick="OnNext">Get Started</button>
+    </div>
+</div>

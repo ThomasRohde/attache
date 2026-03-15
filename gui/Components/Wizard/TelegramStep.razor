@@ -1,0 +1,97 @@
+@code {
+    [Parameter] public WizardData Data { get; set; } = default!;
+    [Parameter] public EventCallback OnBack { get; set; }
+    [Parameter] public EventCallback OnNext { get; set; }
+
+    private bool _configuring;
+    private string? _userIdError;
+
+    private void StartConfiguring() => _configuring = true;
+
+    private void ValidateAndNext()
+    {
+        if (_configuring && !string.IsNullOrWhiteSpace(Data.AuthorizedUserId))
+        {
+            if (!long.TryParse(Data.AuthorizedUserId.Trim(), out var id) || id <= 0)
+            {
+                _userIdError = "User ID must be a positive number";
+                return;
+            }
+        }
+        _userIdError = null;
+        OnNext.InvokeAsync();
+    }
+
+    private void Skip()
+    {
+        Data.TelegramBotToken = null;
+        Data.AuthorizedUserId = null;
+        OnNext.InvokeAsync();
+    }
+}
+
+<div class="wizard-step">
+    <h1>Connect Telegram (Optional)</h1>
+    <p class="wizard-subtitle">Control your assistant from your phone</p>
+
+    @if (!_configuring)
+    {
+        <div class="telegram-intro">
+            <p>Telegram lets you send messages, dispatch coding tasks, and get notified when background work finishes &mdash; all from your phone.</p>
+            <div style="display: flex; gap: 12px; justify-content: center; margin-top: 20px;">
+                <button class="btn btn-primary" @onclick="StartConfiguring">Set Up Telegram</button>
+                <button class="btn btn-secondary" @onclick="Skip">Skip for Now</button>
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="telegram-setup">
+            <div class="telegram-instructions">
+                <strong>Step 1:</strong> Create a bot via
+                <strong>@@BotFather</strong> on Telegram.
+                Send <code>/newbot</code> and follow the prompts.
+            </div>
+
+            <div class="form-group">
+                <label>Bot Token</label>
+                <input type="text"
+                       @bind="Data.TelegramBotToken"
+                       placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11" />
+                <div class="hint">The token BotFather gave you</div>
+            </div>
+
+            <div class="telegram-instructions">
+                <strong>Step 2:</strong> Get your user ID from
+                <strong>@@userinfobot</strong> on Telegram.
+                Send it any message and it replies with your numeric ID.
+            </div>
+
+            <div class="form-group">
+                <label>Your User ID</label>
+                <input type="text"
+                       @bind="Data.AuthorizedUserId"
+                       placeholder="123456789" />
+                @if (_userIdError is not null)
+                {
+                    <div class="hint" style="color: var(--red);">@_userIdError</div>
+                }
+                else
+                {
+                    <div class="hint">Locks the bot so only you can control it</div>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="wizard-nav">
+        <button class="btn btn-secondary" @onclick="OnBack">Back</button>
+        @if (_configuring)
+        {
+            <div style="display: flex; gap: 8px;">
+                <button class="btn btn-secondary" @onclick="Skip">Skip</button>
+                <button class="btn btn-primary" @onclick="ValidateAndNext">Next</button>
+            </div>
+        }
+    </div>
+</div>

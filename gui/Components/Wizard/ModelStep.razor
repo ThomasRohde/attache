@@ -1,0 +1,39 @@
+@code {
+    [Parameter] public WizardData Data { get; set; } = default!;
+    [Parameter] public EventCallback OnBack { get; set; }
+    [Parameter] public EventCallback OnNext { get; set; }
+
+    private record ModelOption(string Id, string Label, string Description);
+
+    private static readonly ModelOption[] Models =
+    [
+        new("claude-sonnet-4.6", "Claude Sonnet 4.6", "Fast and capable, great for most tasks"),
+        new("claude-opus-4.6", "Claude Opus 4.6", "Most powerful, best for complex tasks"),
+        new("gpt-4.1", "GPT-4.1", "Free included model"),
+    ];
+
+    private void SelectModel(string id) => Data.CopilotModel = id;
+}
+
+<div class="wizard-step">
+    <h1>Choose a Default Model</h1>
+    <p class="wizard-subtitle">Select which AI model to use by default</p>
+
+    <div class="model-grid">
+        @foreach (var model in Models)
+        {
+            <div class="model-card @(Data.CopilotModel == model.Id ? "selected" : "")"
+                 @onclick="() => SelectModel(model.Id)">
+                <div class="model-card-name">@model.Label</div>
+                <div class="model-card-desc">@model.Description</div>
+            </div>
+        }
+    </div>
+
+    <p class="wizard-hint">You can switch models anytime</p>
+
+    <div class="wizard-nav">
+        <button class="btn btn-secondary" @onclick="OnBack">Back</button>
+        <button class="btn btn-primary" @onclick="OnNext">Next</button>
+    </div>
+</div>

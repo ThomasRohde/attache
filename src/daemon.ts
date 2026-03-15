@@ -77,11 +77,11 @@ async function main(): Promise<void> {
     createBot();
     await startBot();
   } else if (!config.telegramBotToken && config.authorizedUserId === undefined) {
-    console.log(`${LOG_PREFIX} Telegram not configured — skipping bot. Run 'attache setup' to configure.`);
+    console.log(`${LOG_PREFIX} Telegram not configured — skipping bot. Configure in the Attache GUI.`);
   } else if (!config.telegramBotToken) {
-    console.log(`${LOG_PREFIX} Telegram bot token missing — skipping bot. Run 'attache setup' and enter your bot token.`);
+    console.log(`${LOG_PREFIX} Telegram bot token missing — skipping bot. Add your bot token in the Attache GUI settings.`);
   } else {
-    console.log(`${LOG_PREFIX} Telegram user ID missing — skipping bot. Run 'attache setup' and enter your Telegram user ID (get it from @userinfobot).`);
+    console.log(`${LOG_PREFIX} Telegram user ID missing — skipping bot. Add your Telegram user ID in the Attache GUI settings.`);
   }
 
   console.log(`${LOG_PREFIX} ${identity.productName} is fully operational.`);

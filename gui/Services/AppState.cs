@@ -4,6 +4,12 @@ namespace AttacheGui.Services;
 
 public class AppState
 {
+    private static readonly string EnvPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".attache", ".env");
+
+    public bool IsFirstRun { get; set; } = !File.Exists(EnvPath);
+
     public List<WorkerModel> Workers { get; set; } = [];
     public DiagnosticsModel? Diagnostics { get; set; }
     public string? SelectedWorkerId { get; set; }

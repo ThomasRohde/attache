@@ -30,6 +30,8 @@ npm run build:gui
 
 No test suite exists yet.
 
+> **Note:** First-run configuration (display name, model, Telegram) is handled by the in-GUI setup wizard. There is no CLI setup command.
+
 ## Architecture
 
 ```
@@ -81,7 +83,7 @@ Loaded from `~/.attache/.env` and cwd `.env`, validated with Zod (`src/config.ts
 
 ### Entry points
 
-- `src/cli.ts` — Command router (start, setup, update, help)
+- `src/cli.ts` — Command router (start, update, help)
 - `src/daemon.ts` — Daemon lifecycle (init client → start API → start bot → shutdown)
 - `gui/Program.cs` — Desktop GUI entry point
 

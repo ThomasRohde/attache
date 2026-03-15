@@ -28,27 +28,13 @@ npm install -g attache
 
 ## Quick start
 
-### 1. Run setup
-
-```bash
-attache setup
-```
-
-Configures `~/.attache/.env` with your assistant name and optional Telegram credentials.
-
-### 2. Authenticate Copilot
+### 1. Authenticate Copilot
 
 ```bash
 copilot login
 ```
 
-### 3. Start the daemon
-
-```bash
-attache start
-```
-
-### 4. Launch the GUI
+### 2. Launch the GUI
 
 ```bash
 # From source (development)
@@ -58,9 +44,9 @@ dotnet run --project gui/AttacheGui.csproj
 # %LOCALAPPDATA%\Programs\attache-gui\AttacheGui.exe
 ```
 
-The GUI auto-starts the daemon if it isn't running. It connects via SSE to `localhost:7777`.
+The GUI auto-starts the daemon if it isn't running. On first launch, a setup wizard walks you through choosing a display name, default model, and optional Telegram integration. No terminal required.
 
-### 5. Talk to Attache
+### 3. Talk to Attache
 
 Example prompts:
 
@@ -74,7 +60,6 @@ Example prompts:
 | Command | Description |
 | --- | --- |
 | `attache start` | Start the daemon |
-| `attache setup` | Run interactive setup |
 | `attache update` | Install the latest published package update |
 | `attache help` | Show CLI help |
 
@@ -114,7 +99,7 @@ The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorW
 
 ## Configuration
 
-Stored in `~/.attache/.env`, editable via `attache setup` or the GUI Settings dialog.
+Stored in `~/.attache/.env`, editable via the GUI Settings dialog or setup wizard on first launch.
 
 | Key | Description | Default |
 | --- | --- | --- |
@@ -216,7 +201,7 @@ npm run build:gui
 
 ```
 src/
-  cli.ts              Command router (start, setup, update, help)
+  cli.ts              Command router (start, update, help)
   daemon.ts           Daemon lifecycle
   config.ts           Configuration (Zod + dotenv)
   api/

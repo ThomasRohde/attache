@@ -1,0 +1,30 @@
+@code {
+    [Parameter] public WizardData Data { get; set; } = default!;
+    [Parameter] public EventCallback OnBack { get; set; }
+    [Parameter] public EventCallback OnNext { get; set; }
+}
+
+<div class="wizard-step">
+    <h1>Name Your Assistant</h1>
+    <p class="wizard-subtitle">Choose a display name for your AI assistant</p>
+
+    <div class="form-group" style="max-width: 400px; margin: 24px auto;">
+        <label>Display Name</label>
+        <input type="text"
+               @bind="Data.AssistantDisplayName"
+               @bind:event="oninput"
+               placeholder="Attache" />
+        <div class="hint">This is how your assistant introduces itself in conversations</div>
+    </div>
+
+    <div class="identity-preview">
+        Your assistant will appear as <strong>@(string.IsNullOrWhiteSpace(Data.AssistantDisplayName) ? "Attache" : Data.AssistantDisplayName)</strong>
+    </div>
+
+    <p class="wizard-hint">You can change this anytime in Settings</p>
+
+    <div class="wizard-nav">
+        <button class="btn btn-secondary" @onclick="OnBack">Back</button>
+        <button class="btn btn-primary" @onclick="OnNext">Next</button>
+    </div>
+</div>
