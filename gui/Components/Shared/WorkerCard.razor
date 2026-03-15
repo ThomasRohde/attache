@@ -1,0 +1,13 @@
+<div class="worker-card @(IsSelected ? "selected" : "")" @onclick="OnClick">
+    <div class="worker-name">
+        <StatusDot Status="@Worker.Status" />
+        @Worker.Name
+    </div>
+    <div class="worker-dir">@Worker.WorkingDir</div>
+</div>
+
+@code {
+    [Parameter] public WorkerModel Worker { get; set; } = new();
+    [Parameter] public bool IsSelected { get; set; }
+    [Parameter] public EventCallback OnClick { get; set; }
+}

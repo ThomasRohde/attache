@@ -1,12 +1,13 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { randomBytes } from "crypto";
+import { execSync } from "child_process";
 import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResult } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
-import { config, persistModel } from "../config.js";
+import { config, persistModel, persistEnvVar } from "../config.js";
 import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
-import { getDb, searchMemories } from "../store/db.js";
+import { getDb, searchMemories, logConversation } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
@@ -17,6 +18,7 @@ import {
   createCompleteEvent,
   createConnectedEvent,
   createDeltaEvent,
+  createTranscriptEvent,
   encodeSseEvent,
 } from "./events.js";
 
@@ -214,6 +216,22 @@ app.get("/diagnostics", (_req: Request, res: Response) => {
   });
 });
 
+// Get conversation transcript from database
+app.get("/transcript", (req: Request, res: Response) => {
+  const requestedLimit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 200)) : 50;
+
+  const db = getDb();
+  const rows = db.prepare(
+    `SELECT id, role, content, source, ts FROM conversation_log ORDER BY id DESC LIMIT ?`
+  ).all(limit) as { id: number; role: string; content: string; source: string; ts: string }[];
+
+  // Reverse to chronological order
+  rows.reverse();
+
+  res.json(rows);
+});
+
 // SSE stream for real-time responses
 app.get("/stream", (req: Request, res: Response) => {
   const connectionId = `tui-${++connectionCounter}`;
@@ -256,20 +274,26 @@ app.post("/message", (req: Request, res: Response) => {
     prompt,
     { type: "tui", connectionId },
     (text: string, done: boolean) => {
-      const sseRes = sseClients.get(connectionId);
-      if (sseRes) {
-        const routeResult = done ? getLastRouteResult() : undefined;
-        const route = routeResult ? {
-          model: routeResult.model,
-          routerMode: routeResult.routerMode,
-          tier: routeResult.tier,
-          ...(routeResult.overrideName ? { overrideName: routeResult.overrideName } : {}),
-        } : undefined;
+      const routeResult = done ? getLastRouteResult() : undefined;
+      const route = routeResult ? {
+        model: routeResult.model,
+        routerMode: routeResult.routerMode,
+        tier: routeResult.tier,
+        ...(routeResult.overrideName ? { overrideName: routeResult.overrideName } : {}),
+      } : undefined;
 
-        const event = done
-          ? createCompleteEvent(text, route)
-          : createDeltaEvent(text);
-        sseRes.write(encodeSseEvent(event));
+      if (done) {
+        // Broadcast complete event to ALL SSE clients
+        const event = createCompleteEvent(text, route);
+        for (const [, sseRes] of sseClients) {
+          sseRes.write(encodeSseEvent(event));
+        }
+      } else {
+        // Send deltas only to the originating connection
+        const sseRes = sseClients.get(connectionId);
+        if (sseRes) {
+          sseRes.write(encodeSseEvent(createDeltaEvent(text)));
+        }
       }
     }
   );
@@ -368,6 +392,90 @@ app.delete("/skills/:slug", (req: Request, res: Response) => {
   }
 });
 
+// Get workfolder info
+app.get("/workfolder", (_req: Request, res: Response) => {
+  const cwd = process.cwd();
+  let gitBranch: string | null = null;
+  let gitRoot: string | null = null;
+
+  try {
+    gitBranch = execSync("git rev-parse --abbrev-ref HEAD", { cwd, encoding: "utf-8" }).trim();
+    gitRoot = execSync("git rev-parse --show-toplevel", { cwd, encoding: "utf-8" }).trim();
+  } catch {
+    // Not a git repo
+  }
+
+  res.json({ path: cwd, gitBranch, gitRoot });
+});
+
+// Change workfolder
+app.post("/workfolder", (req: Request, res: Response) => {
+  const { path: newPath } = req.body as { path?: string };
+  if (!newPath || typeof newPath !== "string") {
+    res.status(400).json({ error: "Missing 'path' in request body" });
+    return;
+  }
+
+  try {
+    const stat = statSync(newPath);
+    if (!stat.isDirectory()) {
+      res.status(400).json({ error: `'${newPath}' is not a directory` });
+      return;
+    }
+  } catch {
+    res.status(400).json({ error: `Path '${newPath}' does not exist` });
+    return;
+  }
+
+  persistEnvVar("ATTACHE_WORKFOLDER", newPath);
+  res.json({ status: "ok", restartRequired: true });
+
+  // Trigger restart so daemon picks up new workfolder
+  setTimeout(() => {
+    restartDaemon().catch((err) => {
+      console.error(`${LOG_PREFIX} Restart after workfolder change failed:`, err);
+    });
+  }, 500);
+});
+
+// Update .env config values
+app.post("/config", (req: Request, res: Response) => {
+  const values = req.body as Record<string, string>;
+  if (!values || typeof values !== "object") {
+    res.status(400).json({ error: "Body must be a JSON object of key-value pairs" });
+    return;
+  }
+
+  // Allowlist of configurable keys
+  const allowedKeys = new Set([
+    "TELEGRAM_BOT_TOKEN",
+    "AUTHORIZED_USER_ID",
+    "COPILOT_MODEL",
+    "WORKER_TIMEOUT",
+    "ASSISTANT_DISPLAY_NAME",
+    "ATTACHE_WORKFOLDER",
+  ]);
+
+  let restartRequired = false;
+  for (const [key, value] of Object.entries(values)) {
+    if (!allowedKeys.has(key)) {
+      res.status(400).json({ error: `Key '${key}' is not a configurable setting` });
+      return;
+    }
+    if (typeof value !== "string") {
+      res.status(400).json({ error: `Value for '${key}' must be a string` });
+      return;
+    }
+    persistEnvVar(key, value);
+    // Telegram settings and workfolder require restart
+    if (["TELEGRAM_BOT_TOKEN", "AUTHORIZED_USER_ID", "ATTACHE_WORKFOLDER"].includes(key)) {
+      restartRequired = true;
+    }
+  }
+
+  res.json({ status: "ok", restartRequired });
+});
+
 // Restart daemon
 app.post("/restart", (_req: Request, res: Response) => {
   res.json({ status: "restarting" });
@@ -416,5 +524,13 @@ export function startApiServer(): Promise<void> {
 export function broadcastToSSE(text: string): void {
   for (const [, res] of sseClients) {
     res.write(encodeSseEvent(createCompleteEvent(text)));
+  }
+}
+
+/** Broadcast a transcript entry to all SSE clients (for cross-channel visibility). */
+export function broadcastTranscriptEntry(role: string, content: string, source: string): void {
+  const event = createTranscriptEvent(role, content, source);
+  for (const [, res] of sseClients) {
+    res.write(encodeSseEvent(event));
   }
 }

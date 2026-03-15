@@ -5,6 +5,7 @@ import { createBot, startBot, stopBot, sendProactiveMessage } from "./telegram/b
 import { getDb, closeDb } from "./store/db.js";
 import { config } from "./config.js";
 import { spawn } from "child_process";
+import { statSync } from "fs";
 import { checkForUpdate } from "./update.js";
 import { getEffectiveIdentity, LOG_PREFIX, PRIMARY_RUNTIME_ENV } from "./identity.js";
 
@@ -16,6 +17,22 @@ function truncate(text: string, max = 200): string {
 async function main(): Promise<void> {
   const identity = getEffectiveIdentity();
   console.log(`${LOG_PREFIX} Starting ${identity.productName} daemon...`);
+
+  // Apply workfolder if configured
+  if (config.workfolder) {
+    try {
+      const stat = statSync(config.workfolder);
+      if (stat.isDirectory()) {
+        process.chdir(config.workfolder);
+        console.log(`${LOG_PREFIX} Working directory: ${config.workfolder}`);
+      } else {
+        console.log(`${LOG_PREFIX} ⚠ ATTACHE_WORKFOLDER is not a directory: ${config.workfolder}`);
+      }
+    } catch {
+      console.log(`${LOG_PREFIX} ⚠ ATTACHE_WORKFOLDER does not exist: ${config.workfolder}`);
+    }
+  }
+
   if (config.selfEditEnabled) {
     console.log(`${LOG_PREFIX} ⚠ Self-edit mode enabled — ${identity.productName} can modify its own source code`);
   }

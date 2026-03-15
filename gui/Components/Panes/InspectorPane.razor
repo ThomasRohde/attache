@@ -1,0 +1,161 @@
+@inject AppState State
+@implements IDisposable
+
+<div class="pane">
+    <div class="pane-header">Inspector</div>
+    <div class="pane-body">
+        @if (State.Diagnostics is not null)
+        {
+            @if (State.Workfolder is not null)
+            {
+                <div class="inspector-section">
+                    <h3>Workfolder</h3>
+                    <div class="inspector-row">
+                        <span class="label">Path</span>
+                        <span class="value">@ShortenPath(State.Workfolder.Path)</span>
+                    </div>
+                    @if (State.Workfolder.GitBranch is not null)
+                    {
+                        <div class="inspector-row">
+                            <span class="label">Git</span>
+                            <span class="value" style="color: var(--accent);">@State.Workfolder.GitBranch</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="inspector-row">
+                            <span class="label">Git</span>
+                            <span class="value" style="color: var(--text-muted);">not a repo</span>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div class="inspector-section">
+                <h3>Daemon</h3>
+                <div class="inspector-row">
+                    <span class="label">Model</span>
+                    <span class="value">@(State.Diagnostics.Routing?.CurrentModel ?? "—")</span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">Auto-route</span>
+                    <span class="value">@(State.Diagnostics.Routing?.AutoRouting?.Enabled == true ? "on" : "off")</span>
+                </div>
+                @if (State.Diagnostics.Routing?.LastRoute is not null)
+                {
+                    <div class="inspector-row">
+                        <span class="label">Last route</span>
+                        <span class="value">@State.Diagnostics.Routing.LastRoute.Tier / @State.Diagnostics.Routing.LastRoute.Model</span>
+                    </div>
+                }
+                <div class="inspector-row">
+                    <span class="label">Workers</span>
+                    <span class="value">@(State.Diagnostics.Workers?.Running ?? 0) / @(State.Diagnostics.Workers?.Count ?? 0)</span>
+                </div>
+            </div>
+
+            <div class="inspector-section">
+                <h3>Process</h3>
+                <div class="inspector-row">
+                    <span class="label">PID</span>
+                    <span class="value">@(State.Diagnostics.Process?.Pid)</span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">Uptime</span>
+                    <span class="value">@FormatUptime(State.Diagnostics.Process?.UptimeSeconds ?? 0)</span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">RSS</span>
+                    <span class="value">@FormatBytes(State.Diagnostics.Process?.MemoryUsage?.Rss ?? 0)</span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">Node</span>
+                    <span class="value">@(State.Diagnostics.Process?.NodeVersion ?? "—")</span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">SSE clients</span>
+                    <span class="value">@(State.Diagnostics.Api?.ActiveSseConnections ?? 0)</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="empty-state">Waiting for daemon...</div>
+        }
+
+        @if (State.SelectedWorker is not null)
+        {
+            <div class="inspector-section">
+                <h3>Selected Worker</h3>
+                <div class="inspector-row">
+                    <span class="label">Name</span>
+                    <span class="value">@State.SelectedWorker.Name</span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">Status</span>
+                    <span class="value">
+                        <StatusDot Status="@State.SelectedWorker.Status" />
+                        @State.SelectedWorker.Status
+                    </span>
+                </div>
+                <div class="inspector-row">
+                    <span class="label">Directory</span>
+                    <span class="value">@State.SelectedWorker.WorkingDir</span>
+                </div>
+                @if (State.SelectedWorker.ElapsedMs is not null)
+                {
+                    <div class="inspector-row">
+                        <span class="label">Elapsed</span>
+                        <span class="value">@FormatElapsed(State.SelectedWorker.ElapsedMs.Value)</span>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.OnStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private string ShortenPath(string path)
+    {
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (path.StartsWith(home, StringComparison.OrdinalIgnoreCase))
+            return "~" + path[home.Length..];
+        return path;
+    }
+
+    private string FormatUptime(int seconds)
+    {
+        if (seconds < 60) return $"{seconds}s";
+        if (seconds < 3600) return $"{seconds / 60}m {seconds % 60}s";
+        return $"{seconds / 3600}h {(seconds % 3600) / 60}m";
+    }
+
+    private string FormatBytes(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024} KB";
+        return $"{bytes / (1024 * 1024)} MB";
+    }
+
+    private string FormatElapsed(long ms)
+    {
+        var seconds = ms / 1000;
+        if (seconds < 60) return $"{seconds}s";
+        return $"{seconds / 60}m {seconds % 60}s";
+    }
+
+    public void Dispose()
+    {
+        State.OnStateChanged -= HandleStateChanged;
+    }
+}

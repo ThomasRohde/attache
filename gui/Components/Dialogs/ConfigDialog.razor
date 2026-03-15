@@ -1,0 +1,184 @@
+@inject ApiClient Api
+@inject AppState State
+
+<div class="dialog-overlay" @onclick="Close">
+    <div class="dialog" @onclick:stopPropagation="true">
+        <div class="dialog-header">
+            <h2>Settings</h2>
+            <button class="dialog-close" @onclick="Close">x</button>
+        </div>
+        <div class="dialog-tabs">
+            <button class="dialog-tab @(_activeTab == "model" ? "active" : "")" @onclick='() => _activeTab = "model"'>Model</button>
+            <button class="dialog-tab @(_activeTab == "general" ? "active" : "")" @onclick='() => _activeTab = "general"'>General</button>
+            <button class="dialog-tab @(_activeTab == "workfolder" ? "active" : "")" @onclick='() => _activeTab = "workfolder"'>Workfolder</button>
+            <button class="dialog-tab @(_activeTab == "telegram" ? "active" : "")" @onclick='() => _activeTab = "telegram"'>Telegram</button>
+            <button class="dialog-tab @(_activeTab == "about" ? "active" : "")" @onclick='() => _activeTab = "about"'>About</button>
+        </div>
+        <div class="dialog-body">
+            @switch (_activeTab)
+            {
+                case "model":
+                    <div class="form-group">
+                        <label>Current Model</label>
+                        <input @bind="_model" placeholder="e.g. claude-sonnet-4.6" />
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" @bind="_autoRouting" />
+                            Enable auto-routing
+                        </label>
+                        <div class="hint">Automatically selects the best model tier for each message.</div>
+                    </div>
+                    break;
+
+                case "general":
+                    <div class="form-group">
+                        <label>Display Name</label>
+                        <input @bind="_displayName" placeholder="Attache" />
+                    </div>
+                    break;
+
+                case "workfolder":
+                    <div class="form-group">
+                        <label>Working Folder</label>
+                        <input @bind="_workfolder" placeholder="C:\path\to\project" />
+                        <div class="hint">Changing the workfolder will restart the daemon.</div>
+                    </div>
+                    @if (State.Workfolder?.GitBranch is not null)
+                    {
+                        <div class="form-group">
+                            <label>Git Branch</label>
+                            <input value="@State.Workfolder.GitBranch" disabled />
+                        </div>
+                    }
+                    break;
+
+                case "telegram":
+                    <div class="form-group">
+                        <label>Bot Token</label>
+                        <input @bind="_telegramToken" placeholder="From BotFather" />
+                    </div>
+                    <div class="form-group">
+                        <label>Authorized User ID</label>
+                        <input @bind="_telegramUserId" placeholder="Numeric Telegram user ID" />
+                    </div>
+                    <div class="hint">Changes require a daemon restart to take effect.</div>
+                    break;
+
+                case "about":
+                    <div class="form-group">
+                        <label>Attache</label>
+                        <div class="hint">AI orchestrator powered by the GitHub Copilot SDK</div>
+                    </div>
+                    @if (State.Diagnostics?.Identity is not null)
+                    {
+                        <div class="form-group">
+                            <label>Name</label>
+                            <div>@State.Diagnostics.Identity.ProductName</div>
+                        </div>
+                    }
+                    @if (State.Diagnostics?.Process is not null)
+                    {
+                        <div class="form-group">
+                            <label>Node</label>
+                            <div>@State.Diagnostics.Process.NodeVersion</div>
+                        </div>
+                    }
+                    break;
+            }
+        </div>
+        <div class="form-actions">
+            <button class="btn btn-secondary" @onclick="Close">Cancel</button>
+            @if (_activeTab != "about")
+            {
+                <button class="btn btn-primary" @onclick="SaveAsync" disabled="@_saving">
+                    @(_saving ? "Saving..." : "Save")
+                </button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _activeTab = "model";
+    private string _model = "";
+    private bool _autoRouting;
+    private string _displayName = "";
+    private string _workfolder = "";
+    private string _telegramToken = "";
+    private string _telegramUserId = "";
+    private bool _saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var config = await Api.GetConfigAsync();
+        if (config is not null)
+        {
+            _model = config.CurrentModel;
+            _displayName = config.AssistantDisplayName;
+        }
+
+        if (State.Diagnostics?.Routing?.AutoRouting is not null)
+        {
+            _autoRouting = State.Diagnostics.Routing.AutoRouting.Enabled;
+        }
+
+        if (State.Workfolder is not null)
+        {
+            _workfolder = State.Workfolder.Path;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _saving = true;
+        StateHasChanged();
+
+        try
+        {
+            switch (_activeTab)
+            {
+                case "model":
+                    if (!string.IsNullOrWhiteSpace(_model))
+                        await Api.PostModelAsync(_model.Trim());
+                    await Api.PostAutoAsync(_autoRouting);
+                    break;
+
+                case "general":
+                    if (!string.IsNullOrWhiteSpace(_displayName))
+                    {
+                        await Api.PostConfigAsync(new Dictionary<string, string>
+                        {
+                            ["ASSISTANT_DISPLAY_NAME"] = _displayName.Trim()
+                        });
+                    }
+                    break;
+
+                case "workfolder":
+                    if (!string.IsNullOrWhiteSpace(_workfolder))
+                        await Api.PostWorkfolderAsync(_workfolder.Trim());
+                    break;
+
+                case "telegram":
+                    var values = new Dictionary<string, string>();
+                    if (!string.IsNullOrWhiteSpace(_telegramToken))
+                        values["TELEGRAM_BOT_TOKEN"] = _telegramToken.Trim();
+                    if (!string.IsNullOrWhiteSpace(_telegramUserId))
+                        values["AUTHORIZED_USER_ID"] = _telegramUserId.Trim();
+                    if (values.Count > 0)
+                        await Api.PostConfigAsync(values);
+                    break;
+            }
+        }
+        finally
+        {
+            _saving = false;
+        }
+
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+}

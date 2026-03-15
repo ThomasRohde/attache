@@ -6,6 +6,7 @@ import { searchMemories } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
+import { broadcastTranscriptEntry } from "../api/server.js";
 
 let bot: Bot | undefined;
 
@@ -135,12 +136,17 @@ export function createBot(): Bot {
 
     startTyping();
 
+    // Broadcast the user's Telegram message to SSE clients
+    broadcastTranscriptEntry("user", ctx.message.text, "telegram");
+
     sendToOrchestrator(
       ctx.message.text,
       { type: "telegram", chatId, messageId: userMessageId },
       (text: string, done: boolean) => {
         if (done) {
           stopTyping();
+          // Broadcast the assistant response to SSE clients
+          broadcastTranscriptEntry("assistant", text, "telegram");
           // Send final message — use chunking for long responses, reply-quote original
           void (async () => {
             // Append model indicator

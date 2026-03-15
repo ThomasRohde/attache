@@ -1,0 +1,99 @@
+@inject AppState State
+@inject ApiClient Api
+@inject SseService Sse
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="composer">
+    <div class="composer-row">
+        <div class="composer-status">
+            <StatusDot Status="@ConnectionStatus" />
+            <span>@State.StatusMessage</span>
+        </div>
+    </div>
+    <div class="composer-row">
+        <textarea @bind="_input"
+                  @bind:event="oninput"
+                  @onkeydown="HandleKeyDown"
+                  @ref="_textareaRef"
+                  placeholder="Type a message..."
+                  disabled="@(!Sse.IsConnected)"
+                  rows="1"></textarea>
+        @if (State.IsProcessing)
+        {
+            <button class="cancel-btn" @onclick="CancelAsync">Cancel</button>
+        }
+        else
+        {
+            <button class="send-btn"
+                    @onclick="SendAsync"
+                    disabled="@(!CanSend)">Send</button>
+        }
+    </div>
+</div>
+
+@code {
+    private string _input = "";
+    private ElementReference _textareaRef;
+
+    private string ConnectionStatus => State.ConnectionState switch
+    {
+        ConnectionState.Connected => "connected",
+        ConnectionState.Connecting => "connecting",
+        _ => "disconnected"
+    };
+
+    private bool CanSend => Sse.IsConnected && !string.IsNullOrWhiteSpace(_input) && !State.IsProcessing;
+
+    protected override void OnInitialized()
+    {
+        State.OnStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter" && !e.ShiftKey)
+        {
+            await SendAsync();
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        var text = _input.Trim();
+        if (string.IsNullOrEmpty(text) || !Sse.IsConnected || State.IsProcessing) return;
+
+        _input = "";
+        State.AddUserMessage(text);
+
+        var connectionId = Sse.ConnectionId;
+        if (connectionId is not null)
+        {
+            await Api.SendMessageAsync(text, connectionId);
+        }
+    }
+
+    private async Task CancelAsync()
+    {
+        await Api.PostCancelAsync();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try { await _textareaRef.FocusAsync(); }
+            catch { }
+        }
+    }
+
+    public void Dispose()
+    {
+        State.OnStateChanged -= HandleStateChanged;
+    }
+}

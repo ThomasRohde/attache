@@ -62,7 +62,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         "Returns confirmation with session name.",
       parameters: z.object({
         name: z.string().describe("Short descriptive name for the session, e.g. 'auth-fix'"),
-        working_dir: z.string().describe("Absolute path to the directory to work in"),
+        working_dir: z.string().optional().describe("Absolute path to the directory to work in (defaults to daemon working directory)"),
         initial_prompt: z.string().optional().describe("Optional initial prompt to send to the worker"),
       }),
       handler: async (args) => {
@@ -70,12 +70,13 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           return `Worker '${args.name}' already exists. Use send_to_worker to interact with it.`;
         }
 
+        const workingDir = args.working_dir || process.cwd();
         const home = homedir();
-        const resolvedDir = resolve(args.working_dir);
+        const resolvedDir = resolve(workingDir);
         for (const blocked of BLOCKED_WORKER_DIRS) {
           const blockedPath = join(home, blocked);
           if (resolvedDir === blockedPath || resolvedDir.startsWith(blockedPath + sep)) {
-            return `Refused: '${args.working_dir}' is a sensitive directory. Workers cannot operate in ${blocked}.`;
+            return `Refused: '${workingDir}' is a sensitive directory. Workers cannot operate in ${blocked}.`;
           }
         }
 
@@ -87,14 +88,14 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         const session = await deps.client.createSession({
           model: config.copilotModel,
           configDir: SESSIONS_DIR,
-          workingDirectory: args.working_dir,
+          workingDirectory: workingDir,
           onPermissionRequest: approveAll,
         });
 
         const worker: WorkerInfo = {
           name: args.name,
           session,
-          workingDir: args.working_dir,
+          workingDir,
           status: "idle",
           originChannel: getCurrentSourceChannel(),
         };
@@ -105,7 +106,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         db.prepare(
           `INSERT OR REPLACE INTO worker_sessions (name, copilot_session_id, working_dir, status)
            VALUES (?, ?, ?, 'idle')`
-        ).run(args.name, session.sessionId, args.working_dir);
+        ).run(args.name, session.sessionId, workingDir);
 
         if (args.initial_prompt) {
           worker.status = "running";
@@ -117,7 +118,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           const timeoutMs = config.workerTimeoutMs;
           // Non-blocking: dispatch work and return immediately
           session.sendAndWait({
-            prompt: `Working directory: ${args.working_dir}\n\n${args.initial_prompt}`,
+            prompt: `Working directory: ${workingDir}\n\n${args.initial_prompt}`,
           }, timeoutMs).then((result) => {
             if (worker.cancelled) {
               return;
@@ -138,10 +139,10 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
             getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(args.name);
           });
 
-          return `Worker '${args.name}' created in ${args.working_dir}. Task dispatched — I'll notify you when it's done.`;
+          return `Worker '${args.name}' created in ${workingDir}. Task dispatched — I'll notify you when it's done.`;
         }
 
-        return `Worker '${args.name}' created in ${args.working_dir}. Use send_to_worker to send it prompts.`;
+        return `Worker '${args.name}' created in ${workingDir}. Use send_to_worker to send it prompts.`;
       },
     }),
 

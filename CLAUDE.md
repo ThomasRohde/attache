@@ -4,30 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What is Attache?
 
-Attache is a multi-modal AI assistant daemon that orchestrates Copilot SDK sessions. It accepts input from Telegram, a terminal UI (Ink/React), and an HTTP API, then delegates coding tasks to short-lived worker sessions. All state persists in `~/.attache/`.
+Attache is a multi-modal AI assistant daemon that orchestrates Copilot SDK sessions. It accepts input from Telegram, a desktop GUI (Blazor Hybrid), and an HTTP API, then delegates coding tasks to short-lived worker sessions. All state persists in `~/.attache/`.
 
 ## Commands
 
 ```bash
 npm run build          # TypeScript compilation (tsc)
 npm run daemon         # Run daemon via tsx
-npm run tui            # Run Ink terminal UI via tsx
-npm run tui:legacy     # Run readline-based fallback UI
 npm run dev            # Watch mode for daemon (tsx watch)
-npm run build:shell    # Publish tray app as single-file exe
+npm run build:gui      # Publish GUI as single-file exe
 ```
 
-### Tray app (Windows only)
+### Desktop GUI (Windows only)
 
-The `shell/` directory contains a .NET WinForms system-tray app (`AttacheShell`) that manages the daemon lifecycle, opens the TUI, and provides quick input. Requires .NET 10 SDK targeting `win-x64`.
+The `gui/` directory contains a .NET Blazor Hybrid desktop app (`AttacheGui`) that provides the full UI: streaming markdown transcript, worker management, inspector, configuration, and system tray integration. Requires .NET 10 SDK targeting `win-x64`.
 
 ```bash
 # Debug build (fast iteration)
-cd shell && dotnet build AttacheShell.csproj -c Release
+dotnet run --project gui/AttacheGui.csproj
 
 # Publish single-file self-contained exe (for distribution)
-npm run build:shell
-# Output: shell/dist-win/AttacheShell.exe
+npm run build:gui
+# Output: gui/dist-win/AttacheGui.exe
 ```
 
 No test suite exists yet.
@@ -35,7 +33,7 @@ No test suite exists yet.
 ## Architecture
 
 ```
-Telegram / TUI / HTTP API
+Telegram / GUI / HTTP API
         │
         ▼
   Express API Server (localhost:7777, bearer token auth)
@@ -62,8 +60,8 @@ Telegram / TUI / HTTP API
 - **Router** (`src/copilot/router.ts`): Auto-selects model tier (fast/standard/premium) based on message complexity. Uses gpt-4.1 as classifier. Design tasks always route to opus.
 - **Skills** (`src/copilot/skills.ts`): Three directories — bundled (`skills/`), local (`~/.attache/skills`), global (`~/.agents/skills`). SKILL.md format with YAML frontmatter.
 - **Database** (`src/store/db.ts`): better-sqlite3 with WAL mode. Tables: `worker_sessions`, `attache_state`, `conversation_log` (max 200), `memories`.
-- **API** (`src/api/server.ts`): SSE streaming via `/stream`, message submission via `/message`. Schema-versioned events (`src/api/events.ts`).
-- **Ink TUI** (`src/ui/ink/app.tsx`): 4-pane React/Ink layout — workers list, transcript, inspector, composer. Polls daemon API.
+- **API** (`src/api/server.ts`): SSE streaming via `/stream`, message submission via `/message`, transcript via `/transcript`. Schema-versioned events (`src/api/events.ts`).
+- **GUI** (`gui/`): Blazor Hybrid WinForms app with BlazorWebView. 4-pane layout — workers, transcript (streaming Markdig-rendered markdown), inspector, composer. SSE + polling. System tray with daemon lifecycle management.
 - **Telegram** (`src/telegram/bot.ts`): grammy framework. Auth via `AUTHORIZED_USER_ID`.
 
 ### Configuration
@@ -79,13 +77,13 @@ Loaded from `~/.attache/.env` and cwd `.env`, validated with Zod (`src/config.ts
 | `WORKER_TIMEOUT` | Worker timeout (ms) | 600000 |
 | `ASSISTANT_DISPLAY_NAME` | Cosmetic name | Attache |
 | `ATTACHE_SELF_EDIT` | Allow self-modification | disabled |
+| `ATTACHE_WORKFOLDER` | Default working directory | — |
 
 ### Entry points
 
-- `src/cli.ts` — Command router (start, tui, setup, update, help)
+- `src/cli.ts` — Command router (start, setup, update, help)
 - `src/daemon.ts` — Daemon lifecycle (init client → start API → start bot → shutdown)
-- `src/ui/ink/index.tsx` — Ink TUI entry
-- `src/tui/index.ts` — Legacy readline TUI entry
+- `gui/Program.cs` — Desktop GUI entry point
 
 ## Institutional memory (cwmem)
 
@@ -93,10 +91,11 @@ This repo includes the packaged `cwmem` skill at `.claude/skills/cwmem`. Use tha
 
 ## Tech stack
 
-- TypeScript (ES2022, Node16 modules, react-jsx)
+- TypeScript (ES2022, Node16 modules)
 - Copilot SDK (`@github/copilot-sdk`) for orchestrator and worker sessions
 - Express 5 for HTTP API
 - grammy for Telegram bot
-- Ink 5 + React 18 for terminal UI
+- .NET 10 Blazor Hybrid (WinForms + BlazorWebView) for desktop GUI
+- Markdig for server-side markdown rendering
 - better-sqlite3 for persistence
 - Zod 4 for config validation

@@ -8,22 +8,18 @@ if (platform() !== 'win32') {
 }
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const exeSrc = join(__dirname, '..', 'shell', 'dist-win', 'AttacheShell.exe');
-
-if (!existsSync(exeSrc)) {
-  // Pre-built exe not present — dev environment or non-Windows CI, skip silently
-  process.exit(0);
-}
 
 const localAppData =
   process.env.LOCALAPPDATA ||
   join(process.env.USERPROFILE || '', 'AppData', 'Local');
 
-const installDir = join(localAppData, 'Programs', 'attache-shell');
-const exeDest = join(installDir, 'AttacheShell.exe');
-
-mkdirSync(installDir, { recursive: true });
-copyFileSync(exeSrc, exeDest);
-
-console.log(`✅ Attache Shell installed to: ${exeDest}`);
-console.log(`   Launch it to add Attache to your Windows system tray.`);
+// Install AttacheGui (Blazor desktop app)
+const guiSrc = join(__dirname, '..', 'gui', 'dist-win', 'AttacheGui.exe');
+if (existsSync(guiSrc)) {
+  const guiDir = join(localAppData, 'Programs', 'attache-gui');
+  const guiDest = join(guiDir, 'AttacheGui.exe');
+  mkdirSync(guiDir, { recursive: true });
+  copyFileSync(guiSrc, guiDest);
+  console.log(`Attache GUI installed to: ${guiDest}`);
+  console.log(`  Launch it for the full Attache desktop experience.`);
+}

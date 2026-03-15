@@ -1,0 +1,48 @@
+@inject ApiClient Api
+
+<div class="form-group">
+    <label>Working Folder</label>
+    <div style="display: flex; gap: 8px;">
+        <input @bind="Path" style="flex: 1;" placeholder="C:\path\to\project" />
+        <button class="btn btn-secondary" @onclick="BrowseAsync">Browse</button>
+    </div>
+    <div class="hint">The directory where workers will operate by default.</div>
+</div>
+
+@code {
+    [Parameter] public string Path { get; set; } = "";
+    [Parameter] public EventCallback<string> PathChanged { get; set; }
+
+    private async Task BrowseAsync()
+    {
+        // FolderBrowserDialog must run on STA thread
+        var path = await Task.Run(() =>
+        {
+            string? result = null;
+            var thread = new Thread(() =>
+            {
+                using var dialog = new FolderBrowserDialog
+                {
+                    Description = "Select working folder",
+                    UseDescriptionForTitle = true,
+                    ShowNewFolderButton = false,
+                };
+                if (!string.IsNullOrEmpty(Path) && Directory.Exists(Path))
+                    dialog.InitialDirectory = Path;
+
+                if (dialog.ShowDialog() == DialogResult.OK)
+                    result = dialog.SelectedPath;
+            });
+            thread.SetApartmentState(ApartmentState.STA);
+            thread.Start();
+            thread.Join();
+            return result;
+        });
+
+        if (path is not null)
+        {
+            Path = path;
+            await PathChanged.InvokeAsync(path);
+        }
+    }
+}

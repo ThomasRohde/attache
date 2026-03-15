@@ -6,9 +6,10 @@ export type ApiEventName =
   | "session.connected"
   | "orchestrator.message.delta"
   | "orchestrator.message.complete"
-  | "orchestrator.message.cancelled";
+  | "orchestrator.message.cancelled"
+  | "transcript.entry";
 
-export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled";
+export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript";
 
 export interface RoutePayload {
   model: RouteResult["model"];
@@ -19,6 +20,7 @@ export interface RoutePayload {
 
 type ConnectedData = { connectionId: string };
 type MessageData = { content: string; route?: RoutePayload };
+type TranscriptData = { role: string; content: string; source: string };
 type EmptyData = {};
 
 export type ApiEventEnvelope<TData extends Record<string, unknown>> = {
@@ -64,6 +66,10 @@ export function createCompleteEvent(
 
 export function createCancelledEvent(): ApiEventEnvelope<EmptyData> {
   return withEnvelope("orchestrator.message.cancelled", "cancelled", {});
+}
+
+export function createTranscriptEvent(role: string, content: string, source: string): ApiEventEnvelope<TranscriptData> {
+  return withEnvelope("transcript.entry", "transcript", { role, content, source });
 }
 
 export function encodeSseEvent(event: ApiEventEnvelope<Record<string, unknown>>): string {

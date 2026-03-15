@@ -1,0 +1,92 @@
+@inject AppState State
+@inject IJSRuntime JS
+@implements IDisposable
+
+<div class="pane">
+    <div class="pane-header">Transcript</div>
+    <div class="pane-body transcript-body" id="transcript-scroll">
+        @if (State.TranscriptEntries.Count == 0 && State.StreamingContent is null)
+        {
+            <div class="empty-state">
+                Send a message to start a conversation.
+            </div>
+        }
+        else
+        {
+            @foreach (var entry in State.TranscriptEntries)
+            {
+                <div class="transcript-entry">
+                    <div class="entry-header">
+                        <span class="@(entry.Role == "user" ? "role-user" : "role-assistant")">
+                            @(entry.Role == "user" ? "You" : "Assistant")
+                        </span>
+                        @if (!string.IsNullOrEmpty(entry.Source) && entry.Source != "tui")
+                        {
+                            <span class="timestamp">via @entry.Source</span>
+                        }
+                        <span class="timestamp">@entry.Timestamp.ToString("HH:mm")</span>
+                        @if (entry.Route?.Model is not null)
+                        {
+                            <span class="timestamp">@entry.Route.Model</span>
+                        }
+                    </div>
+                    <div class="entry-content">
+                        <MarkdownBlock Content="@entry.Content" />
+                    </div>
+                </div>
+            }
+
+            @if (State.StreamingContent is not null)
+            {
+                <div class="transcript-entry">
+                    <div class="entry-header">
+                        <span class="role-assistant">Assistant</span>
+                        <span class="timestamp">now</span>
+                    </div>
+                    <div class="entry-content streaming-cursor">
+                        <MarkdownBlock Content="@State.StreamingContent" />
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private int _lastEntryCount;
+    private string? _lastStreamingContent;
+
+    protected override void OnInitialized()
+    {
+        State.OnStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        var entryCount = State.TranscriptEntries.Count;
+        var streaming = State.StreamingContent;
+
+        if (entryCount != _lastEntryCount || streaming != _lastStreamingContent)
+        {
+            _lastEntryCount = entryCount;
+            _lastStreamingContent = streaming;
+
+            try
+            {
+                await JS.InvokeVoidAsync("attache.highlightCode");
+                await JS.InvokeVoidAsync("attache.scrollToBottom", "transcript-scroll");
+            }
+            catch { }
+        }
+    }
+
+    public void Dispose()
+    {
+        State.OnStateChanged -= HandleStateChanged;
+    }
+}

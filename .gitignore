@@ -5,10 +5,10 @@ dist/
 *.db-shm
 *.db-wal
 
-# .NET build outputs (shell/)
-shell/bin/
-shell/obj/
-shell/dist-win/
+# .NET build outputs (gui/)
+gui/bin/
+gui/obj/
+gui/dist-win/
 
 # Global agent skills directory (read-only shared skills)
 .agents/

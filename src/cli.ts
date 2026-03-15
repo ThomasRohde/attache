@@ -26,7 +26,6 @@ Usage:
 
 Commands:
   start       Start the ${PRODUCT_NAME} daemon (Telegram bot + HTTP API)
-  tui         Connect to the daemon via the Ink terminal UI
   setup       Interactive first-run configuration
   update      Check for updates and install the latest version
   help        Show this help message
@@ -37,7 +36,6 @@ Flags (start):
 Examples:
   ${PRIMARY_COMMAND} start             Start the daemon
   ${PRIMARY_COMMAND} start --self-edit Start with self-edit enabled
-  ${PRIMARY_COMMAND} tui               Open the Ink terminal client
   ${PRIMARY_COMMAND} setup             Configure Telegram token and settings
 
 Package:
@@ -55,12 +53,6 @@ switch (command) {
       process.env.ATTACHE_SELF_EDIT = "1";
     }
     await import("./daemon.js");
-    break;
-  }
-  case "tui":
-  {
-    const { runInkTui } = await import("./ui/ink/index.js");
-    runInkTui();
     break;
   }
   case "setup":

@@ -1,0 +1,44 @@
+@inject AppState State
+@implements IDisposable
+
+<div class="pane">
+    <div class="pane-header">Workers</div>
+    <div class="pane-body">
+        @if (State.Workers.Count == 0)
+        {
+            <div class="empty-state">No active workers</div>
+        }
+        else
+        {
+            @foreach (var worker in State.Workers)
+            {
+                <WorkerCard Worker="@worker"
+                            IsSelected="@(worker.Id == State.SelectedWorkerId)"
+                            OnClick="@(() => SelectWorker(worker.Id))" />
+            }
+        }
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        State.OnStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectWorker(string id)
+    {
+        State.SelectedWorkerId = State.SelectedWorkerId == id ? null : id;
+        State.NotifyStateChanged();
+    }
+
+    public void Dispose()
+    {
+        State.OnStateChanged -= HandleStateChanged;
+    }
+}

@@ -1,0 +1,197 @@
+@inject AppState State
+@inject ApiClient Api
+@inject SseService Sse
+@inject MarkdownService Markdown
+@implements IDisposable
+
+<div class="title-bar">
+    <div class="workfolder">
+        @if (State.Workfolder is not null)
+        {
+            <span>@State.Workfolder.Path</span>
+            @if (State.Workfolder.GitBranch is not null)
+            {
+                <span class="branch">(@State.Workfolder.GitBranch)</span>
+            }
+        }
+        else
+        {
+            <span>Attache</span>
+        }
+    </div>
+    <div class="actions">
+        <button @onclick="OpenConfig" title="Settings">Settings</button>
+    </div>
+</div>
+
+<div class="main-grid">
+    <WorkersPane />
+    <TranscriptPane />
+    <InspectorPane />
+</div>
+
+<ComposerPane />
+
+@if (_showConfig)
+{
+    <ConfigDialog OnClose="CloseConfig" />
+}
+
+@code {
+    private System.Timers.Timer? _pollTimer;
+    private bool _showConfig;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Subscribe to state changes
+        State.OnStateChanged += HandleStateChanged;
+
+        // Subscribe to SSE events
+        Sse.Connected += OnSseConnected;
+        Sse.DeltaReceived += OnDelta;
+        Sse.MessageComplete += OnMessageComplete;
+        Sse.Cancelled += OnCancelled;
+        Sse.TranscriptEntry += OnTranscriptEntry;
+        Sse.Disconnected += OnDisconnected;
+
+        // Load conversation history from database
+        await LoadTranscriptHistoryAsync();
+
+        // Start SSE connection
+        State.ConnectionState = ConnectionState.Connecting;
+        State.StatusMessage = "Connecting...";
+        _ = Sse.ConnectAsync();
+
+        // Start polling for workers and diagnostics
+        _pollTimer = new System.Timers.Timer(2000);
+        _pollTimer.Elapsed += async (_, _) => await PollAsync();
+        _pollTimer.Start();
+
+        // Initial fetch
+        await PollAsync();
+        await FetchWorkfolderAsync();
+    }
+
+    private async Task LoadTranscriptHistoryAsync()
+    {
+        try
+        {
+            var rows = await Api.GetTranscriptAsync(50);
+            foreach (var row in rows)
+            {
+                if (row.Role == "system") continue; // skip system/background entries
+
+                DateTime.TryParse(row.Ts, out var ts);
+                State.TranscriptEntries.Add(new TranscriptEntry
+                {
+                    Role = row.Role,
+                    Content = row.Content,
+                    Source = row.Source,
+                    Timestamp = ts != default ? ts.ToLocalTime() : DateTime.Now,
+                });
+            }
+            State.NotifyStateChanged();
+        }
+        catch { }
+    }
+
+    private async Task PollAsync()
+    {
+        try
+        {
+            var workers = await Api.GetSessionsAsync();
+            var diagnostics = await Api.GetDiagnosticsAsync();
+            State.Workers = workers;
+            State.Diagnostics = diagnostics;
+            State.NotifyStateChanged();
+        }
+        catch { }
+    }
+
+    private async Task FetchWorkfolderAsync()
+    {
+        try
+        {
+            var wf = await Api.GetWorkfolderAsync();
+            State.Workfolder = wf;
+            State.NotifyStateChanged();
+        }
+        catch { }
+    }
+
+    private void OnSseConnected()
+    {
+        State.ConnectionState = ConnectionState.Connected;
+        State.StatusMessage = "Connected";
+        // Re-fetch workfolder on (re)connect — daemon may have restarted with new cwd
+        _ = InvokeAsync(async () =>
+        {
+            await FetchWorkfolderAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void OnDelta(string content)
+    {
+        State.UpdateStreamingContent(content);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnMessageComplete(string content, RouteInfo? route)
+    {
+        State.FinalizeAssistantMessage(content, route);
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnCancelled()
+    {
+        State.HandleCancelled();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnTranscriptEntry(string role, string content, string source)
+    {
+        // Cross-channel message (e.g. from Telegram)
+        State.TranscriptEntries.Add(new TranscriptEntry
+        {
+            Role = role,
+            Content = content,
+            Source = source,
+            Timestamp = DateTime.Now,
+        });
+        State.NotifyStateChanged();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnDisconnected(string message)
+    {
+        State.ConnectionState = ConnectionState.Connecting;
+        State.StatusMessage = message;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OpenConfig() => _showConfig = true;
+    private void CloseConfig()
+    {
+        _showConfig = false;
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        _pollTimer?.Stop();
+        _pollTimer?.Dispose();
+        State.OnStateChanged -= HandleStateChanged;
+        Sse.Connected -= OnSseConnected;
+        Sse.DeltaReceived -= OnDelta;
+        Sse.MessageComplete -= OnMessageComplete;
+        Sse.Cancelled -= OnCancelled;
+        Sse.TranscriptEntry -= OnTranscriptEntry;
+        Sse.Disconnected -= OnDisconnected;
+    }
+}

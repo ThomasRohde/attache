@@ -1,13 +1,13 @@
-name: Build Attache Shell
+name: Build Attache GUI
 
 on:
   push:
     branches: [main]
     paths:
-      - 'shell/**'
+      - 'gui/**'
   pull_request:
     paths:
-      - 'shell/**'
+      - 'gui/**'
   workflow_dispatch:
 
 jobs:
@@ -23,30 +23,29 @@ jobs:
           dotnet-version: '10.0.x'
 
       - name: Restore
-        run: dotnet restore shell/AttacheShell.csproj
+        run: dotnet restore gui/AttacheGui.csproj
 
       - name: Publish self-contained single-file exe
         run: |
-          dotnet publish shell/AttacheShell.csproj `
+          dotnet publish gui/AttacheGui.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:EnableCompressionInSingleFile=true `
-            -o shell/dist-win
+            -o gui/dist-win
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AttacheShell
-          path: shell/dist-win/AttacheShell.exe
+          name: AttacheGui
+          path: gui/dist-win/AttacheGui.exe
 
-      # On push to main, commit the updated exe so it is bundled in npm publish
       - name: Commit built exe
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add shell/dist-win/AttacheShell.exe
-          git diff --staged --quiet || git commit -m "chore: update AttacheShell.exe [skip ci]"
+          git add gui/dist-win/AttacheGui.exe
+          git diff --staged --quiet || git commit -m "chore: update AttacheGui.exe [skip ci]"
           git push

@@ -1,34 +1,29 @@
 # Attache
 
-Attache is a local AI orchestrator built on the GitHub Copilot SDK. It runs a daemon on your machine, keeps a long-lived orchestrator session alive, and lets you talk to it from Telegram or a terminal UI. For coding work, Attache dispatches worker Copilot sessions into project directories and streams the results back to you.
+Attache is a local AI orchestrator built on the GitHub Copilot SDK. It runs a daemon on your machine, keeps a long-lived orchestrator session alive, and lets you interact with it from a desktop GUI, Telegram, or any HTTP client. For coding work, Attache dispatches worker Copilot sessions into project directories and streams the results back to you.
 
 ## Highlights
 
-- Persistent orchestrator daemon for ongoing context and task routing
-- Pane-based Ink terminal UI plus a readline fallback client
+- Persistent orchestrator daemon with ongoing context and task routing
+- Blazor Hybrid desktop GUI with streaming markdown, 4-pane layout, and system tray
+- Unified conversation transcript across all channels (GUI + Telegram)
 - Optional Telegram control from your phone
+- Configurable workfolder for project-scoped sessions
 - Worker session management for repo-specific coding tasks
-- Local HTTP API with server-sent events for real-time streaming
-- Configurable model selection and auto-routing controls
+- Local HTTP API with SSE for real-time streaming
+- Auto-routing: selects model tier (fast/standard/premium) per message
 - SQLite-backed state, memory, and session persistence
+
+## Prerequisites
+
+- **Node.js 18+**
+- **GitHub Copilot CLI** installed and authenticated (`copilot login`)
+- **.NET 10 SDK** (Windows, for the desktop GUI)
 
 ## Install
 
-Requirements:
-
-- Node.js 18+
-- GitHub Copilot CLI installed and authenticated with `copilot login`
-
-Install from npm:
-
 ```bash
 npm install -g attache
-```
-
-Or use the install script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/burkeholland/attache/main/install.sh | bash
 ```
 
 ## Quick start
@@ -39,13 +34,9 @@ curl -fsSL https://raw.githubusercontent.com/burkeholland/attache/main/install.s
 attache setup
 ```
 
-Setup will:
+Configures `~/.attache/.env` with your assistant name and optional Telegram credentials.
 
-- create or update local config
-- let you choose an assistant display name
-- optionally configure Telegram access
-
-### 2. Make sure Copilot CLI is authenticated
+### 2. Authenticate Copilot
 
 ```bash
 copilot login
@@ -57,101 +48,84 @@ copilot login
 attache start
 ```
 
-To allow the daemon to modify its own source tree for supported workflows:
+### 4. Launch the GUI
 
 ```bash
-attache start --self-edit
+# From source (development)
+dotnet run --project gui/AttacheGui.csproj
+
+# Or if installed via npm, launch from:
+# %LOCALAPPDATA%\Programs\attache-gui\AttacheGui.exe
 ```
 
-### 4. Open a terminal client
+The GUI auto-starts the daemon if it isn't running. It connects via SSE to `localhost:7777`.
 
-Primary Ink UI:
-
-```bash
-attache tui
-```
-
-Readline fallback UI:
-
-```bash
-attache tui:legacy
-```
-
-### 5. Start talking to Attache
+### 5. Talk to Attache
 
 Example prompts:
 
 - "Start working on the auth bug in ~/dev/myapp"
 - "What sessions are running?"
 - "Check on the api-tests session"
-- "Kill the auth-fix session"
-- "What changed in the last worker run?"
+- "Switch to claude-opus-4.6"
 
 ## Command reference
 
 | Command | Description |
 | --- | --- |
 | `attache start` | Start the daemon |
-| `attache tui` | Open the Ink terminal UI |
-| `attache tui:legacy` | Open the readline fallback UI |
 | `attache setup` | Run interactive setup |
 | `attache update` | Install the latest published package update |
 | `attache help` | Show CLI help |
-
-### Start flags
 
 | Flag | Description |
 | --- | --- |
 | `--self-edit` | Enable self-edit mode for the current daemon process |
 
-## Terminal UIs
+## Desktop GUI
 
-### Ink UI: `attache tui`
+The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorWebView. All UI is Razor components with HTML/CSS.
 
-The Ink client is the primary local terminal experience. It renders four working areas:
+### Layout
 
-- workers pane
-- transcript pane
-- inspector pane
-- composer pane
+```
++----------------------------------------------------------------------+
+| Workfolder: ~/dev/myapp (main)                         [Settings]    |
++------------------+-----------------------------+---------------------+
+|  Workers         |   Transcript                |  Inspector          |
+|  > auth-fix [*]  |   You: fix the login bug    |  Workfolder: ...    |
+|    ~/dev/myapp   |   Assistant: I'll fix...     |  Git: main          |
+|                  |   ```typescript              |  Model: opus-4.6    |
+|                  |   const user = await...      |  Workers: 1/5       |
+|                  |   ```                        |  Uptime: 12m 30s    |
++------------------+-----------------------------+---------------------+
+| [*] Connected    [Type a message...                      ] [Send]    |
++----------------------------------------------------------------------+
+```
 
-It polls `/sessions` and `/diagnostics`, streams responses from `/stream`, submits prompts to `/message`, and uses `/cancel` for interruption.
+### Features
 
-#### Ink controls
+- Streaming markdown rendering (Markdig + highlight.js)
+- Unified transcript: see both GUI and Telegram conversations
+- Worker list with status indicators and selection
+- Inspector: workfolder, git branch, model, routing, process diagnostics
+- Configuration dialog: model, auto-routing, workfolder, Telegram, display name
+- System tray: start/stop/restart daemon, hide to tray on close, auto-start at login
 
-| Key | Action |
-| --- | --- |
-| `Tab` | Cycle focus between panes |
-| `Up` / `Down` | Change the selected worker when the workers pane is focused |
-| `Enter` | Send the current composer text |
-| `Esc` | Cancel the current in-flight response |
-| `q` | Quit when focus is not in the composer |
-| `Ctrl+C` | Quit the app |
+## Configuration
 
-### Readline UI: `attache tui:legacy`
+Stored in `~/.attache/.env`, editable via `attache setup` or the GUI Settings dialog.
 
-The readline client remains available as a lightweight fallback.
-
-#### Readline commands
-
-| Command | Description |
-| --- | --- |
-| `/model [name]` | Show or switch the current model |
-| `/memory` | Show stored memories |
-| `/skills` | List installed skills |
-| `/workers` | List active worker sessions |
-| `/copy` | Copy the last response to the clipboard |
-| `/status` | Daemon health check |
-| `/restart` | Restart the daemon |
-| `/cancel` | Cancel the current in-flight message |
-| `/clear` | Clear the screen |
-| `/help` | Show help |
-| `/quit` | Exit the UI |
-| `Escape` | Cancel a running response |
-
-## Configuration and data
-
-Attache stores its local state under `~/.attache`.
+| Key | Description | Default |
+| --- | --- | --- |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token | -- |
+| `AUTHORIZED_USER_ID` | Numeric Telegram user ID | -- |
+| `API_PORT` | Daemon API port | `7777` |
+| `COPILOT_MODEL` | Default Copilot model | `claude-sonnet-4.6` |
+| `WORKER_TIMEOUT` | Worker timeout in ms | `600000` |
+| `ASSISTANT_DISPLAY_NAME` | Cosmetic name shown in UI | `Attache` |
+| `ATTACHE_SELF_EDIT` | Allow self-modification | disabled |
+| `ATTACHE_WORKFOLDER` | Default working directory for workers | -- |
 
 ### Key paths
 
@@ -162,140 +136,117 @@ Attache stores its local state under `~/.attache`.
 | API bearer token | `~/.attache/api-token` |
 | Session state | `~/.attache/sessions/` |
 | User skills | `~/.attache/skills/` |
-| TUI history | `~/.attache/tui_history` |
-| TUI debug log | `~/.attache/tui-debug.log` |
 
-### Config values
+## Daemon API
 
-These values are loaded from the active env file:
+Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 
-| Key | Description |
-| --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token |
-| `AUTHORIZED_USER_ID` | Numeric Telegram user ID allowed to control the bot |
-| `API_PORT` | Local daemon API port, default `7777` |
-| `COPILOT_MODEL` | Default Copilot model, default `claude-sonnet-4.6` |
-| `WORKER_TIMEOUT` | Worker timeout in milliseconds, default `600000` |
-| `ASSISTANT_DISPLAY_NAME` | Cosmetic assistant name shown in the UI and responses |
-| `ATTACHE_SELF_EDIT` | Enable self-edit mode when set to `1` |
-
-`ASSISTANT_DISPLAY_NAME` only changes display text. It does not change product identity, package names, file names, or API schema fields.
-
-## Local daemon API
-
-The daemon listens on `http://127.0.0.1:$API_PORT`.
-
-Authentication:
-
-- `/status` is public for local health checks
-- all other routes require `Authorization: Bearer <token>`
-- the token is stored in `~/.attache/api-token`
-
-The response stream is schema-versioned so clients can evolve without immediately breaking older consumers.
-
-### API surface
+- `/status` is public
+- All other routes require `Authorization: Bearer <token>` (from `~/.attache/api-token`)
 
 | Method | Path | Description |
 | --- | --- | --- |
-| `GET` | `/status` | Health check and active worker summary |
-| `GET` | `/config/effective` | Effective runtime identity and config values |
+| `GET` | `/status` | Health check |
+| `GET` | `/config/effective` | Runtime identity and config |
 | `GET` | `/sessions` | List worker sessions |
-| `GET` | `/workers/:id` | Inspect a single worker |
-| `GET` | `/workers/:id/logs?tail=200` | Fetch worker output and tailed log lines |
-| `POST` | `/workers/:id/cancel` | Cancel and remove a worker |
-| `GET` | `/diagnostics` | Runtime diagnostics, routing, process info, worker counts |
-| `GET` | `/stream` | Server-sent event response stream |
-| `POST` | `/message` | Queue a user prompt for the orchestrator |
-| `POST` | `/cancel` | Cancel the current in-flight orchestrator message |
-| `GET` | `/model` | Read the current model |
-| `POST` | `/model` | Change and persist the current model |
-| `GET` | `/auto` | Read auto-routing config |
-| `POST` | `/auto` | Update auto-routing config |
-| `GET` | `/memory` | List stored memories |
-| `GET` | `/skills` | List installed skills |
+| `GET` | `/workers/:id` | Worker detail |
+| `GET` | `/workers/:id/logs` | Worker output logs |
+| `POST` | `/workers/:id/cancel` | Cancel a worker |
+| `GET` | `/diagnostics` | Process, routing, and worker diagnostics |
+| `GET` | `/transcript` | Conversation history from database |
+| `GET` | `/workfolder` | Current working directory + git info |
+| `POST` | `/workfolder` | Change workfolder (triggers restart) |
+| `POST` | `/config` | Update `.env` config values |
+| `GET` | `/stream` | SSE event stream |
+| `POST` | `/message` | Submit a prompt |
+| `POST` | `/cancel` | Cancel in-flight message |
+| `GET` | `/model` | Current model |
+| `POST` | `/model` | Switch model |
+| `GET` | `/auto` | Auto-routing config |
+| `POST` | `/auto` | Update auto-routing |
+| `GET` | `/memory` | List memories |
+| `GET` | `/skills` | List skills |
 | `DELETE` | `/skills/:slug` | Remove a local skill |
-| `POST` | `/restart` | Restart the daemon |
-| `POST` | `/send-photo` | Send a photo through the configured Telegram bot |
+| `POST` | `/restart` | Restart daemon |
 
-## How it works
+## Architecture
 
-```text
-Telegram ----> Attache Daemon <---- Terminal UI
-                    |
+```
+Telegram ───> Attache Daemon <─── Desktop GUI
+                    │
              Orchestrator Session
-                    |
+                    │
         +-----------+-----------+
         |           |           |
       Worker 1    Worker 2    Worker N
 ```
 
-### Core pieces
-
-- **Daemon**: runs the Copilot SDK client, local HTTP API, and optional Telegram bot
-- **Orchestrator**: the long-lived Copilot session that receives every message and decides whether to answer directly or delegate work
-- **Workers**: short-lived Copilot sessions created in explicit project directories for coding tasks
-- **Terminal clients**: local frontends that connect to the daemon instead of talking to Copilot directly
-
-### Working directory model
-
-- the orchestrator inherits the directory where you launched `attache start`
-- each worker gets an explicit `workingDirectory` chosen for the task
-- Attache state stays under `~/.attache` regardless of launch directory
-
-## Windows tray app
-
-On Windows, a system-tray companion app manages the daemon lifecycle without a terminal. It is installed automatically by `npm install -g attache` and placed at `%LOCALAPPDATA%\Programs\attache-shell\AttacheShell.exe`.
-
-### Features
-
-- Starts the daemon automatically on launch
-- Open TUI in Windows Terminal
-- Quick Input dialog for sending a prompt without opening the full TUI
-- Start / Stop / Restart daemon
-- Status check with balloon notifications
-- Start on Login toggle (via Windows Registry)
-
-### Building from source
-
-Requires .NET 10 SDK targeting `win-x64`.
-
-```bash
-# Debug build (fast iteration)
-cd shell
-dotnet build AttacheShell.csproj -c Release
-
-# Publish single-file self-contained exe
-npm run build:shell
-# Output: shell/dist-win/AttacheShell.exe
-```
+- **Daemon** (`src/daemon.ts`): Copilot SDK client, Express API, optional Telegram bot
+- **Orchestrator** (`src/copilot/orchestrator.ts`): long-lived session, serial message queue
+- **Workers** (`src/copilot/tools.ts`): short-lived sessions in project directories (max 5, 600s timeout)
+- **Router** (`src/copilot/router.ts`): auto-selects model tier per message complexity
+- **GUI** (`gui/`): Blazor Hybrid WinForms app with streaming SSE, Markdig markdown, system tray
 
 ## Development
 
 ```bash
 # Clone and install
-git clone https://github.com/burkeholland/attache.git
+git clone https://github.com/ThomasRohde/attache.git
 cd attache
 npm install
 
-# Run the daemon
+# Start daemon (development, with hot reload)
+npm run dev
+
+# Start daemon (one-shot)
 npm run daemon
 
-# Run the Ink UI directly in another terminal
-npm run tui
-
-# Run the readline fallback UI directly
-npm run tui:legacy
-
-# Watch the daemon in development
-npm run dev
+# Launch GUI (development)
+dotnet run --project gui/AttacheGui.csproj
 
 # Build TypeScript
 npm run build
 
-# Build the Windows tray app
-npm run build:shell
+# Build GUI exe (single-file, self-contained)
+npm run build:gui
+# Output: gui/dist-win/AttacheGui.exe
 ```
 
-## Acknowledgements
+### Project structure
 
-Attache grows directly out of Max. Thanks to Max for the foundation, the workflows, and the users who got the project this far.
+```
+src/
+  cli.ts              Command router (start, setup, update, help)
+  daemon.ts           Daemon lifecycle
+  config.ts           Configuration (Zod + dotenv)
+  api/
+    server.ts         Express API + SSE
+    events.ts         SSE event schema
+  copilot/
+    orchestrator.ts   Single persistent Copilot session
+    tools.ts          14 tools (workers, skills, memory, routing)
+    router.ts         Auto model tier selection
+    skills.ts         Skill discovery and management
+  store/
+    db.ts             SQLite (better-sqlite3, WAL mode)
+  telegram/
+    bot.ts            grammy Telegram bot
+
+gui/
+  AttacheGui.csproj   .NET 10 Blazor Hybrid project
+  Program.cs          Entry point (STAThread, singleton mutex)
+  MainForm.cs         WinForms host (BlazorWebView + NotifyIcon)
+  Services/           ApiClient, SseService, DaemonManager, AppState, MarkdownService
+  Models/             API response models
+  Components/
+    Layout/           MainLayout.razor
+    Pages/            Dashboard.razor (orchestrates panes + SSE)
+    Panes/            TranscriptPane, WorkersPane, InspectorPane, ComposerPane
+    Shared/           MarkdownBlock, WorkerCard, StatusDot
+    Dialogs/          ConfigDialog, WorkfolderPicker
+  wwwroot/            index.html, CSS dark theme, highlight.js
+```
+
+## License
+
+MIT

@@ -4,7 +4,9 @@ import { readFileSync, writeFileSync } from "fs";
 import { ATTACHE_ENV_PATH, ENV_PATH, ensureAttacheHome } from "./paths.js";
 
 // Load Attache first, then cwd .env for dev compatibility.
-loadEnv({ path: ATTACHE_ENV_PATH });
+// override: true ensures restarted daemons pick up .env changes
+// (without it, dotenv skips vars already in process.env from the parent)
+loadEnv({ path: ATTACHE_ENV_PATH, override: true });
 loadEnv(); // also check cwd for backwards compat
 
 function getEnvValue(...keys: string[]): string | undefined {
@@ -40,6 +42,7 @@ const configSchema = z.object({
   WORKER_TIMEOUT: z.string().optional(),
   ASSISTANT_DISPLAY_NAME: z.string().min(1).optional(),
   SELF_EDIT_ENABLED: z.string().optional(),
+  ATTACHE_WORKFOLDER: z.string().min(1).optional(),
 });
 
 const raw = configSchema.parse({
@@ -50,6 +53,7 @@ const raw = configSchema.parse({
   WORKER_TIMEOUT: getEnvValue("WORKER_TIMEOUT"),
   ASSISTANT_DISPLAY_NAME: getEnvValue("ASSISTANT_DISPLAY_NAME"),
   SELF_EDIT_ENABLED: getEnvValue("ATTACHE_SELF_EDIT"),
+  ATTACHE_WORKFOLDER: getEnvValue("ATTACHE_WORKFOLDER"),
 });
 
 const parsedUserId = parseStrictPositiveInteger(raw.AUTHORIZED_USER_ID, "AUTHORIZED_USER_ID");
@@ -98,6 +102,9 @@ export const config = {
   get selfEditEnabled(): boolean {
     return raw.SELF_EDIT_ENABLED === "1";
   },
+  get workfolder(): string | undefined {
+    return raw.ATTACHE_WORKFOLDER || undefined;
+  },
 };
 
 function serializeEnvValue(value: string): string {
@@ -105,7 +112,7 @@ function serializeEnvValue(value: string): string {
 }
 
 /** Update or append an env var in the active Attache .env file. */
-function persistEnvVar(key: string, value: string): void {
+export function persistEnvVar(key: string, value: string): void {
   ensureAttacheHome();
   try {
     const content = readFileSync(ENV_PATH, "utf-8");
