@@ -6,7 +6,7 @@
     "attache": "dist/cli.js"
   },
   "files": [
-    "dist/**/*.js",
+    "dist/**/*.{js,d.ts,d.ts.map,js.map}",
     "skills/",
     "gui/dist-win/AttacheGui.exe",
     "scripts/postinstall.js",
@@ -20,6 +20,7 @@
     "daemon": "tsx src/daemon.ts",
     "dev": "tsx --watch src/daemon.ts",
     "postinstall": "node scripts/postinstall.js",
+    "test": "echo \"No test suite yet\"",
     "prepublishOnly": "npm run build:ts"
   },
   "engines": {

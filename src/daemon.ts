@@ -1,3 +1,10 @@
+// Workaround: The Copilot CLI gates windowsHide on `"type" in process`, which
+// is only true in Electron. Setting this before the SDK loads causes MCP server
+// spawns to use windowsHide, preventing console window flashes on Windows.
+if (process.platform === "win32" && !("type" in process)) {
+  (process as any).type = "browser";
+}
+
 import { getClient, stopClient } from "./copilot/client.js";
 import { initOrchestrator, setMessageLogger, setProactiveNotify, getWorkers } from "./copilot/orchestrator.js";
 import { startApiServer, broadcastToSSE } from "./api/server.js";

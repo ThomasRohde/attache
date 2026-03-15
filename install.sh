@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # Attache installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/burkeholland/attache/main/install.sh | bash
-# Dev:   ./install.sh --dev  (skips npm install, runs setup from local source)
+# Usage: curl -fsSL https://raw.githubusercontent.com/ThomasRohde/attache/main/install.sh | bash
+# Dev:   ./install.sh --dev  (skips npm install, runs from local source)
 
 DEV_MODE=false
 if [ "${1:-}" = "--dev" ]; then
@@ -22,13 +22,13 @@ success() { echo -e "${GREEN}$1${RESET}"; }
 warn() { echo -e "${YELLOW}$1${RESET}"; }
 error() { echo -e "${RED}$1${RESET}" >&2; }
 
-run_setup() {
+run_start() {
   if command -v attache &>/dev/null; then
-    attache setup < /dev/tty
+    echo "  Run 'attache start' to launch the daemon."
+    echo "  First-time configuration is handled by the in-GUI setup wizard."
   else
-    error "✗ Attache installed, but 'attache' is not on PATH yet."
-    echo "  Open a new terminal and run: attache setup"
-    exit 1
+    warn "⚠ 'attache' is not on PATH yet."
+    echo "  Open a new terminal and run: attache start"
   fi
 }
 
@@ -87,16 +87,14 @@ if [ "$DEV_MODE" = true ]; then
   info "Building Attache from local source..."
   npm run build
   echo ""
-  info "Running Attache setup from local build..."
+  success "✅ Attache built successfully!"
   echo ""
-  node dist/setup.js < /dev/tty
+  run_start
 else
   info "Installing Attache via npm..."
   npm install -g attache
   echo ""
   success "✅ Attache installed successfully!"
   echo ""
-  info "Let's get Attache configured..."
-  echo ""
-  run_setup
+  run_start
 fi

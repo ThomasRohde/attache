@@ -13,9 +13,9 @@ gui/dist-win/
 # Global agent skills directory (read-only shared skills)
 .agents/
 
-# Claude Code / auto-memory
-.claude/
-memory/
+# Claude Code / auto-memory (workspace-specific, not repo content)
+.claude/settings/
+.claude/projects/
 
 # cwmem
 .cwmem/

@@ -1,0 +1,19 @@
+{
+  "items": [
+    "configures",
+    "contradicts",
+    "delegates_to",
+    "depends_on",
+    "derived_from",
+    "extends",
+    "owned_by",
+    "references",
+    "related_to",
+    "routes_to",
+    "streams_to",
+    "supersedes",
+    "supports"
+  ],
+  "schema_version": "1.0",
+  "taxonomy": "relation-types"
+}

@@ -1,0 +1,22 @@
+{
+  "items": [
+    "api-design",
+    "architecture",
+    "bugfix",
+    "config",
+    "decision",
+    "feature",
+    "finding",
+    "integration",
+    "performance",
+    "protocol",
+    "refactor",
+    "reference",
+    "security",
+    "skill",
+    "standard",
+    "ux"
+  ],
+  "schema_version": "1.0",
+  "taxonomy": "tags"
+}

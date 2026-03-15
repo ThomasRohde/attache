@@ -1,4 +1,5 @@
 import { getEffectiveIdentity } from "../identity.js";
+import { config } from "../config.js";
 
 export function getOrchestratorSystemMessage(
   memorySummary?: string,
@@ -134,6 +135,6 @@ You can handle **multiple tasks simultaneously**. If the user sends a new messag
 11. If a skill requires authentication that hasn't been set up, explain what's needed and help the user through it.
 12. **You have persistent memory.** For important facts that should survive a session reset, use the \`remember\` tool.
 13. **Proactive memory**: When the user shares preferences, project details, people info, or routines, proactively use \`remember\` with source "auto".
-14. **Sending media to Telegram**: You can send photos/images to the user on Telegram by calling: \`curl -s -X POST http://127.0.0.1:7777/send-photo -H 'Content-Type: application/json' -d '{"photo": "<path-or-url>", "caption": "<optional caption>"}'\`. Use this whenever you have an image to share.
+14. **Sending media to Telegram**: You can send photos/images to the user on Telegram by calling: \`curl -s -X POST http://127.0.0.1:${config.apiPort}/send-photo -H 'Content-Type: application/json' -d '{"photo": "<path-or-url>", "caption": "<optional caption>"}'\`. Use this whenever you have an image to share.
 ${selfEditBlock}${memoryBlock}`;
 }

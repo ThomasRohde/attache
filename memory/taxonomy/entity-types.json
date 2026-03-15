@@ -1,0 +1,19 @@
+{
+  "items": [
+    "api_endpoint",
+    "cli_command",
+    "component",
+    "config_var",
+    "database_table",
+    "input_channel",
+    "model_tier",
+    "person",
+    "repo_artifact",
+    "skill",
+    "subsystem",
+    "technology",
+    "worker"
+  ],
+  "schema_version": "1.0",
+  "taxonomy": "entity-types"
+}

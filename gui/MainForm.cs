@@ -185,7 +185,8 @@ public partial class MainForm : Form
 
     private void ToggleAutoStart(object? sender, EventArgs e)
     {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true)!;
+        using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath, writable: true);
+        if (key is null) return;
         if (IsAutoStartEnabled())
         {
             key.DeleteValue(RunValueName, throwOnMissingValue: false);
@@ -247,6 +248,9 @@ internal static class Icons
     public static Icon Grey => _grey ??= CreateCircleIcon(Color.FromArgb(156, 163, 175));
     public static Icon Yellow => _yellow ??= CreateCircleIcon(Color.FromArgb(234, 179, 8));
 
+    [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+    private static extern bool DestroyIcon(IntPtr hIcon);
+
     private static Icon CreateCircleIcon(Color color)
     {
         using var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
@@ -255,7 +259,10 @@ internal static class Icons
         g.SmoothingMode = SmoothingMode.AntiAlias;
         using var brush = new SolidBrush(color);
         g.FillEllipse(brush, 2, 2, 12, 12);
-        return Icon.FromHandle(bmp.GetHicon());
+        var hIcon = bmp.GetHicon();
+        var icon = (Icon)Icon.FromHandle(hIcon).Clone();
+        DestroyIcon(hIcon);
+        return icon;
     }
 
     public static Icon CreateAppIcon()
@@ -270,7 +277,10 @@ internal static class Icons
         using var textBrush = new SolidBrush(Color.White);
         var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         g.DrawString("A", font, textBrush, new RectangleF(0, 0, 32, 32), sf);
-        return Icon.FromHandle(bmp.GetHicon());
+        var hIcon = bmp.GetHicon();
+        var icon = (Icon)Icon.FromHandle(hIcon).Clone();
+        DestroyIcon(hIcon);
+        return icon;
     }
 }
 
