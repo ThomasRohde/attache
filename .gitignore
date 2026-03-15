@@ -5,8 +5,20 @@ dist/
 *.db-shm
 *.db-wal
 
+# .NET build outputs (shell/)
+shell/bin/
+shell/obj/
+shell/dist-win/
+
 # Global agent skills directory (read-only shared skills)
 .agents/
+
+# Claude Code / auto-memory
+.claude/
+memory/
+
+# cwmem
+.cwmem/
 
 # OS
 .DS_Store
@@ -18,4 +30,3 @@ Thumbs.db
 *~
 .vscode/
 .idea/
-skills/blog-writer/

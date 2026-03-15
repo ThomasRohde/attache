@@ -242,6 +242,33 @@ Telegram ----> Attache Daemon <---- Terminal UI
 - each worker gets an explicit `workingDirectory` chosen for the task
 - Attache state stays under `~/.attache` regardless of launch directory
 
+## Windows tray app
+
+On Windows, a system-tray companion app manages the daemon lifecycle without a terminal. It is installed automatically by `npm install -g attache` and placed at `%LOCALAPPDATA%\Programs\attache-shell\AttacheShell.exe`.
+
+### Features
+
+- Starts the daemon automatically on launch
+- Open TUI in Windows Terminal
+- Quick Input dialog for sending a prompt without opening the full TUI
+- Start / Stop / Restart daemon
+- Status check with balloon notifications
+- Start on Login toggle (via Windows Registry)
+
+### Building from source
+
+Requires .NET 10 SDK targeting `win-x64`.
+
+```bash
+# Debug build (fast iteration)
+cd shell
+dotnet build AttacheShell.csproj -c Release
+
+# Publish single-file self-contained exe
+npm run build:shell
+# Output: shell/dist-win/AttacheShell.exe
+```
+
 ## Development
 
 ```bash
@@ -264,6 +291,9 @@ npm run dev
 
 # Build TypeScript
 npm run build
+
+# Build the Windows tray app
+npm run build:shell
 ```
 
 ## Acknowledgements

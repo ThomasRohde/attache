@@ -6,6 +6,8 @@ import {
   type EffectiveConfigResponse,
   type WorkerSummary,
 } from "../shared/daemon-client.js";
+import { MarkdownText } from "./markdown.js";
+import { InlineTextInput } from "./text-input.js";
 
 type FocusPane = "workers" | "transcript" | "inspector" | "composer";
 type ConnectionState = "connecting" | "connected" | "disconnected";
@@ -20,7 +22,9 @@ interface TranscriptEntry {
 interface TranscriptLine {
   key: string;
   role: TranscriptRole;
+  prefix: string;
   text: string;
+  codeBlock?: boolean;
 }
 
 const FOCUS_ORDER: FocusPane[] = ["workers", "transcript", "inspector", "composer"];
@@ -202,6 +206,7 @@ const DashboardPanels = memo(function DashboardPanels({
   selectedWorkerId,
   leftWidth,
   rightWidth,
+  transcriptTitle,
   transcriptLines,
   diagnosticsLines,
 }: {
@@ -210,6 +215,7 @@ const DashboardPanels = memo(function DashboardPanels({
   selectedWorkerId: string | null;
   leftWidth: number;
   rightWidth: number;
+  transcriptTitle: string;
   transcriptLines: TranscriptLine[];
   diagnosticsLines: string[];
 }): JSX.Element {
@@ -237,10 +243,15 @@ const DashboardPanels = memo(function DashboardPanels({
 
       <Box width={1} />
 
-      <Pane title="Transcript" focused={focus === "transcript"}>
+      <Pane title={transcriptTitle} focused={focus === "transcript"}>
         {transcriptLines.map((line) => (
           <Text key={line.key} color={transcriptColor(line.role)}>
-            {line.text}
+            {line.prefix}
+            <MarkdownText
+              text={line.text}
+              baseColor={transcriptColor(line.role)}
+              codeBlock={line.codeBlock}
+            />
           </Text>
         ))}
       </Pane>
@@ -262,61 +273,53 @@ const ComposerPane = memo(function ComposerPane({
   focus,
   connectionState,
   statusMessage,
+  inputWidth,
   onSubmit,
   onDraftChange,
 }: {
   focus: FocusPane;
   connectionState: ConnectionState;
   statusMessage: string;
+  inputWidth: number;
   onSubmit: (prompt: string) => Promise<boolean>;
   onDraftChange: (draft: string) => void;
 }): JSX.Element {
   const [draft, setDraft] = useState("");
 
-  useEffect(() => {
-    onDraftChange(draft);
-  }, [draft, onDraftChange]);
+  const handleChange = useCallback((nextDraft: string) => {
+    setDraft(nextDraft);
+    onDraftChange(nextDraft);
+  }, [onDraftChange]);
 
-  useInput((input, key) => {
-    if (focus !== "composer") {
-      return;
+  const handleSubmit = useCallback(async (value: string) => {
+    const shouldClear = await onSubmit(value);
+    if (shouldClear) {
+      setDraft("");
+      onDraftChange("");
     }
-
-    if (key.return) {
-      void onSubmit(draft).then((shouldClear) => {
-        if (shouldClear) {
-          setDraft("");
-        }
-      });
-      return;
-    }
-
-    if (key.backspace || key.delete) {
-      setDraft((current) => current.slice(0, -1));
-      return;
-    }
-
-    if (key.ctrl || key.meta || key.tab || key.escape) {
-      return;
-    }
-
-    if (input.length > 0) {
-      setDraft((current) => current + input);
-    }
-  });
+  }, [onDraftChange, onSubmit]);
 
   return (
-    <Box marginTop={1}>
+    <Box flexShrink={0} height={8}>
       <Pane title={`Composer${focus === "composer" ? " [focused]" : ""}`} focused={focus === "composer"}>
         <Text color={connectionState === "connected" ? "green" : connectionState === "connecting" ? "yellow" : "red"}>
           {connectionState === "connected" ? "● connected" : connectionState === "connecting" ? "● connecting" : "● disconnected"}
         </Text>
-        <Text>
-          {"> "} {draft}
-          {focus === "composer" ? "█" : ""}
-        </Text>
+        <Box>
+          <Text color="cyan">{"> "}</Text>
+          <Box flexGrow={1}>
+            <InlineTextInput
+              value={draft}
+              placeholder="Type a prompt..."
+              focus={focus === "composer"}
+              width={inputWidth}
+              onChange={handleChange}
+              onSubmit={handleSubmit}
+            />
+          </Box>
+        </Box>
         <Text dimColor>{statusMessage}</Text>
-        <Text dimColor>Tab focus • ↑/↓ select worker • Esc cancel • Enter send • q/Ctrl+C quit • legacy: attache tui:legacy</Text>
+        <Text dimColor>Tab focus • ↑/↓ select worker • Esc cancel • Enter send • q/Ctrl+C quit</Text>
       </Pane>
     </Box>
   );
@@ -339,6 +342,7 @@ export function InkShellApp(): JSX.Element {
   const [statusMessage, setStatusMessage] = useState("Connecting to daemon…");
   const [sending, setSending] = useState(false);
   const [lastRouteSummary, setLastRouteSummary] = useState<string>("No route yet");
+  const [transcriptScrollOffset, setTranscriptScrollOffset] = useState(0);
 
   const activeMessageRef = useRef(false);
   const visibleActivityRef = useRef(false);
@@ -569,11 +573,12 @@ export function InkShellApp(): JSX.Element {
   const leftWidth = size.columns >= 140 ? 32 : 26;
   const rightWidth = size.columns >= 140 ? 38 : 32;
   const centerWidth = Math.max(32, size.columns - leftWidth - rightWidth - 6);
-  const transcriptLineBudget = Math.max(8, size.rows - 11);
+  const composerInputWidth = Math.max(12, size.columns - 12);
+  const transcriptLineBudget = Math.max(8, size.rows - 13);
   const detailWidth = Math.max(20, rightWidth - 4);
   const centerContentWidth = Math.max(24, centerWidth - 4);
 
-  const transcriptLines = useMemo(() => {
+  const { transcriptLines, transcriptTitle } = useMemo(() => {
     const assistantName = effectiveConfig?.assistantDisplayName ?? client.config.identity.assistantDisplayName;
     const lines: TranscriptLine[] = [];
 
@@ -584,37 +589,54 @@ export function InkShellApp(): JSX.Element {
           ? assistantName
           : "system";
 
+      let inCodeBlock = false;
       const wrapped = wrapText(entry.content, Math.max(10, centerContentWidth - label.length - 3));
       wrapped.forEach((line, index) => {
-        const prefix = index === 0 ? `${label}> ` : " ".repeat(label.length + 2);
+        const pfx = index === 0 ? `${label}> ` : " ".repeat(label.length + 2);
+        const trimmedLine = line.trimStart();
+        if (trimmedLine.startsWith("```")) {
+          inCodeBlock = !inCodeBlock;
+        }
         lines.push({
           key: `${entry.id}-${index}`,
           role: entry.role,
-          text: `${prefix}${line}`,
+          prefix: pfx,
+          text: line,
+          codeBlock: inCodeBlock && !trimmedLine.startsWith("```"),
         });
       });
       lines.push({
         key: `${entry.id}-gap`,
         role: "system",
+        prefix: "",
         text: " ",
       });
     }
 
     if (streamingContent.trim()) {
-      const label = `${assistantName}> `;
-      const wrapped = wrapText(streamingContent, Math.max(10, centerContentWidth - label.length));
+      const pfxFirst = `${assistantName}> `;
+      const pfxCont = " ".repeat(pfxFirst.length);
+      const wrapped = wrapText(streamingContent, Math.max(10, centerContentWidth - pfxFirst.length));
+      let inCodeBlock = false;
       wrapped.forEach((line, index) => {
+        const trimmedLine = line.trimStart();
+        if (trimmedLine.startsWith("```")) {
+          inCodeBlock = !inCodeBlock;
+        }
         lines.push({
           key: `stream-${index}`,
           role: "assistant",
-          text: `${index === 0 ? label : " ".repeat(label.length)}${line}`,
+          prefix: index === 0 ? pfxFirst : pfxCont,
+          text: line,
+          codeBlock: inCodeBlock && !trimmedLine.startsWith("```"),
         });
       });
     } else if (sending) {
       lines.push({
         key: "stream-pending",
         role: "assistant",
-        text: `${assistantName}> Thinking…`,
+        prefix: `${assistantName}> `,
+        text: "Thinking…",
       });
     }
 
@@ -622,12 +644,23 @@ export function InkShellApp(): JSX.Element {
       lines.push({
         key: "empty",
         role: "system",
+        prefix: "",
         text: "No transcript yet. Type a prompt in the composer pane and press Enter.",
       });
     }
 
-    return lines.slice(-transcriptLineBudget);
-  }, [centerContentWidth, client.config.identity.assistantDisplayName, effectiveConfig?.assistantDisplayName, entries, sending, streamingContent, transcriptLineBudget]);
+    const maxOffset = Math.max(0, lines.length - transcriptLineBudget);
+    const clampedOffset = clamp(transcriptScrollOffset, 0, maxOffset);
+    const end = lines.length - clampedOffset;
+    const start = Math.max(0, end - transcriptLineBudget);
+    const linesAbove = start;
+
+    const title = linesAbove > 0
+      ? `Transcript [+${linesAbove} above]`
+      : "Transcript";
+
+    return { transcriptLines: lines.slice(start, end), transcriptTitle: title };
+  }, [centerContentWidth, client.config.identity.assistantDisplayName, effectiveConfig?.assistantDisplayName, entries, sending, streamingContent, transcriptLineBudget, transcriptScrollOffset]);
 
   const diagnosticsLines = useMemo(() => {
     const lines: string[] = [];
@@ -681,6 +714,12 @@ export function InkShellApp(): JSX.Element {
     selectedWorker,
     size.rows,
   ]);
+
+  useEffect(() => {
+    if (transcriptScrollOffset <= 1) {
+      setTranscriptScrollOffset(0);
+    }
+  }, [entries.length, streamingContent]);
 
   const moveWorkerSelection = (direction: -1 | 1) => {
     if (workers.length === 0) {
@@ -794,6 +833,18 @@ export function InkShellApp(): JSX.Element {
       }
     }
 
+    if (focus === "transcript") {
+      if (key.upArrow) {
+        setTranscriptScrollOffset((current) => current + 1);
+        return;
+      }
+
+      if (key.downArrow) {
+        setTranscriptScrollOffset((current) => Math.max(0, current - 1));
+        return;
+      }
+    }
+
   });
 
   return (
@@ -804,6 +855,7 @@ export function InkShellApp(): JSX.Element {
         selectedWorkerId={selectedWorkerId}
         leftWidth={leftWidth}
         rightWidth={rightWidth}
+        transcriptTitle={transcriptTitle}
         transcriptLines={transcriptLines}
         diagnosticsLines={diagnosticsLines}
       />
@@ -812,6 +864,7 @@ export function InkShellApp(): JSX.Element {
         focus={focus}
         connectionState={connectionState}
         statusMessage={statusMessage}
+        inputWidth={composerInputWidth}
         onSubmit={submitPrompt}
         onDraftChange={handleDraftChange}
       />

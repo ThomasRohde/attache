@@ -1,0 +1,52 @@
+name: Build Attache Shell
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'shell/**'
+  pull_request:
+    paths:
+      - 'shell/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore shell/AttacheShell.csproj
+
+      - name: Publish self-contained single-file exe
+        run: |
+          dotnet publish shell/AttacheShell.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=true `
+            -p:EnableCompressionInSingleFile=true `
+            -o shell/dist-win
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AttacheShell
+          path: shell/dist-win/AttacheShell.exe
+
+      # On push to main, commit the updated exe so it is bundled in npm publish
+      - name: Commit built exe
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add shell/dist-win/AttacheShell.exe
+          git diff --staged --quiet || git commit -m "chore: update AttacheShell.exe [skip ci]"
+          git push

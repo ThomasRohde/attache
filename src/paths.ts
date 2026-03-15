@@ -12,8 +12,6 @@ export const ATTACHE_DB_PATH = join(ATTACHE_HOME, "attache.db");
 export const ATTACHE_ENV_PATH = join(ATTACHE_HOME, ".env");
 export const ATTACHE_SKILLS_DIR = join(ATTACHE_HOME, "skills");
 export const ATTACHE_SESSIONS_DIR = join(ATTACHE_HOME, "sessions");
-export const ATTACHE_HISTORY_PATH = join(ATTACHE_HOME, "tui_history");
-export const ATTACHE_TUI_DEBUG_LOG_PATH = join(ATTACHE_HOME, "tui-debug.log");
 export const ATTACHE_API_TOKEN_PATH = join(ATTACHE_HOME, "api-token");
 
 /** Return the active Attache home directory. */
@@ -36,12 +34,6 @@ export const SKILLS_DIR = ATTACHE_SKILLS_DIR;
 
 /** Path to Attache's isolated session state (keeps CLI history clean) */
 export const SESSIONS_DIR = ATTACHE_SESSIONS_DIR;
-
-/** Path to TUI readline history */
-export const HISTORY_PATH = ATTACHE_HISTORY_PATH;
-
-/** Path to optional TUI debug log */
-export const TUI_DEBUG_LOG_PATH = ATTACHE_TUI_DEBUG_LOG_PATH;
 
 /** Path to the API bearer token file */
 export const API_TOKEN_PATH = ATTACHE_API_TOKEN_PATH;

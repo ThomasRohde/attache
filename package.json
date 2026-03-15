@@ -8,14 +8,17 @@
   "files": [
     "dist/**/*.js",
     "skills/",
+    "shell/dist-win/AttacheShell.exe",
+    "scripts/postinstall.js",
     "README.md"
   ],
   "scripts": {
     "build": "tsc",
+    "build:shell": "cd shell && dotnet publish AttacheShell.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o dist-win",
     "daemon": "tsx src/daemon.ts",
     "tui": "tsx src/ui/ink/index.tsx",
-    "tui:legacy": "tsx src/tui/index.ts",
     "dev": "tsx --watch src/daemon.ts",
+    "postinstall": "node scripts/postinstall.js",
     "prepublishOnly": "npm run build"
   },
   "engines": {

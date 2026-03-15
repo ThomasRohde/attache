@@ -27,7 +27,6 @@ Usage:
 Commands:
   start       Start the ${PRODUCT_NAME} daemon (Telegram bot + HTTP API)
   tui         Connect to the daemon via the Ink terminal UI
-  tui:legacy  Connect via the legacy readline terminal UI
   setup       Interactive first-run configuration
   update      Check for updates and install the latest version
   help        Show this help message
@@ -39,7 +38,6 @@ Examples:
   ${PRIMARY_COMMAND} start             Start the daemon
   ${PRIMARY_COMMAND} start --self-edit Start with self-edit enabled
   ${PRIMARY_COMMAND} tui               Open the Ink terminal client
-  ${PRIMARY_COMMAND} tui:legacy        Open the legacy readline client
   ${PRIMARY_COMMAND} setup             Configure Telegram token and settings
 
 Package:
@@ -65,9 +63,6 @@ switch (command) {
     runInkTui();
     break;
   }
-  case "tui:legacy":
-    await import("./tui/index.js");
-    break;
   case "setup":
     await import("./setup.js");
     break;

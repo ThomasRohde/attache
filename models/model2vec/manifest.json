@@ -1,0 +1,9 @@
+{
+  "model_name": "minishlab/potion-base-8M",
+  "model_version": "641201ef75e5f9f3ef6cdbf69436f8ce19f8e6ab",
+  "vector_dim": 256,
+  "model_path": "model",
+  "normalize": true,
+  "license": "MIT",
+  "notes": "Vendored from huggingface.co/minishlab/potion-base-8M. Distilled from baai/bge-base-en-v1.5 using model2vec."
+}
