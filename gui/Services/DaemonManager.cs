@@ -22,6 +22,10 @@ public class DaemonManager
             Arguments = arguments,
             UseShellExecute = false,
             CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            RedirectStandardInput = true,
         };
 
         var path = Environment.GetEnvironmentVariable("PATH") ?? "";
@@ -33,6 +37,9 @@ public class DaemonManager
         try
         {
             _process = Process.Start(psi);
+            // Drain streams asynchronously to prevent buffer deadlocks
+            _process?.BeginOutputReadLine();
+            _process?.BeginErrorReadLine();
         }
         catch (Exception ex)
         {
@@ -63,31 +70,13 @@ public class DaemonManager
 
     private static bool TryResolveCommand(out string fileName, out string arguments)
     {
-        fileName = "cmd.exe";
-        arguments = "/c attache start";
+        fileName = "";
+        arguments = "";
 
-        var wherePath = TryWhich("attache");
-        if (wherePath is not null)
-        {
-            fileName = "cmd.exe";
-            arguments = $"/c \"{wherePath}\" start";
-            return true;
-        }
+        // Check known paths first to avoid spawning where.exe (which can flash a console)
+        var nodePath = FindNodeExe() ?? TryWhich("node");
 
-        var nodePath = TryWhich("node") ?? FindNodeExe();
-
-        if (nodePath is not null)
-        {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var cliJs = Path.Combine(appData, "npm", "node_modules", "attache", "dist", "cli.js");
-            if (File.Exists(cliJs))
-            {
-                fileName = nodePath;
-                arguments = $"\"{cliJs}\" start";
-                return true;
-            }
-        }
-
+        // 1. Try walking up from the exe directory (dev / co-located layout — always freshest)
         if (nodePath is not null)
         {
             var dir = AppContext.BaseDirectory;
@@ -103,6 +92,19 @@ public class DaemonManager
                 var parent = Directory.GetParent(dir)?.FullName;
                 if (parent is null) break;
                 dir = parent;
+            }
+        }
+
+        // 2. Fall back to the globally-installed npm package
+        if (nodePath is not null)
+        {
+            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var cliJs = Path.Combine(appData, "npm", "node_modules", "attache", "dist", "cli.js");
+            if (File.Exists(cliJs))
+            {
+                fileName = nodePath;
+                arguments = $"\"{cliJs}\" start";
+                return true;
             }
         }
 
@@ -131,8 +133,10 @@ public class DaemonManager
             var psi = new ProcessStartInfo("where.exe", name)
             {
                 RedirectStandardOutput = true,
+                RedirectStandardError = true,
                 UseShellExecute = false,
                 CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
             };
             psi.EnvironmentVariables["PATH"] = augmentedPath;
 

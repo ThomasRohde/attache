@@ -311,6 +311,25 @@ app.post("/cancel", async (_req: Request, res: Response) => {
   res.json({ status: "ok", cancelled });
 });
 
+// List available models
+app.get("/models", async (_req: Request, res: Response) => {
+  try {
+    const { getClient } = await import("../copilot/client.js");
+    const client = await getClient();
+    const models = await client.listModels();
+    const list = models
+      .filter((m) => m.policy?.state === "enabled" && !m.name.includes("(Internal only)"))
+      .map((m) => ({
+        id: m.id,
+        name: m.name,
+        multiplier: m.billing?.multiplier ?? 0,
+      }));
+    res.json(list);
+  } catch {
+    res.json([]);
+  }
+});
+
 // Get or switch model
 app.get("/model", (_req: Request, res: Response) => {
   res.json({ model: config.copilotModel });

@@ -19,15 +19,24 @@
             {
                 case "model":
                     <div class="form-group">
-                        <label>Current Model</label>
-                        <input @bind="_model" placeholder="e.g. claude-sonnet-4.6" />
-                    </div>
-                    <div class="form-group">
                         <label>
                             <input type="checkbox" @bind="_autoRouting" />
                             Enable auto-routing
                         </label>
                         <div class="hint">Automatically selects the best model tier for each message.</div>
+                    </div>
+                    <div class="form-group">
+                        <label>Default Model</label>
+                        <select @bind="_model" disabled="@_autoRouting">
+                            @foreach (var m in _models)
+                            {
+                                <option value="@m.Id">@m.DisplayLabel</option>
+                            }
+                        </select>
+                        @if (_autoRouting)
+                        {
+                            <div class="hint">Model is selected automatically when auto-routing is enabled.</div>
+                        }
                     </div>
                     break;
 
@@ -110,15 +119,34 @@
     private string _telegramToken = "";
     private string _telegramUserId = "";
     private bool _saving;
+    private List<ModelInfo> _models = [];
+
+    private static readonly List<ModelInfo> FallbackModels =
+    [
+        new() { Id = "claude-sonnet-4.6", Name = "Claude Sonnet 4.6", Multiplier = 1 },
+        new() { Id = "claude-opus-4.6", Name = "Claude Opus 4.6", Multiplier = 1 },
+        new() { Id = "gpt-4.1", Name = "GPT-4.1", Multiplier = 0 },
+    ];
 
     protected override async Task OnInitializedAsync()
     {
-        var config = await Api.GetConfigAsync();
+        var configTask = Api.GetConfigAsync();
+        var modelsTask = Api.GetModelsAsync();
+
+        var config = await configTask;
         if (config is not null)
         {
             _model = config.CurrentModel;
             _displayName = config.AssistantDisplayName;
         }
+
+        _models = await modelsTask;
+        if (_models.Count == 0)
+            _models = FallbackModels;
+
+        // Ensure current model is in the list
+        if (!string.IsNullOrEmpty(_model) && !_models.Any(m => m.Id == _model))
+            _models.Insert(0, new ModelInfo { Id = _model, Name = _model });
 
         if (State.Diagnostics?.Routing?.AutoRouting is not null)
         {
