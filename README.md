@@ -186,15 +186,21 @@ npm run dev
 # Start daemon (one-shot)
 npm run daemon
 
-# Launch GUI (development)
-dotnet run --project gui/AttacheGui.csproj
-
-# Build TypeScript
+# Full build (TypeScript + GUI exe)
 npm run build
 
-# Build GUI exe (single-file, self-contained)
+# Start daemon + launch GUI
+npm start
+
+# Build TypeScript only
+npm run build:ts
+
+# Build GUI exe only (single-file, self-contained)
 npm run build:gui
 # Output: gui/dist-win/AttacheGui.exe
+
+# Launch GUI in development mode (debug build, hot reload)
+dotnet run --project gui/AttacheGui.csproj
 ```
 
 ### Project structure

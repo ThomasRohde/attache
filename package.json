@@ -13,12 +13,14 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
-    "build:gui": "cd gui && dotnet publish AttacheGui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o dist-win",
+    "build": "tsc && cd gui && dotnet publish AttacheGui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist-win && echo. && echo Build complete. Run with: gui/dist-win/AttacheGui.exe",
+    "build:ts": "tsc",
+    "build:gui": "cd gui && dotnet publish AttacheGui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist-win",
+    "start": "tsx src/daemon.ts & gui\\dist-win\\AttacheGui.exe",
     "daemon": "tsx src/daemon.ts",
     "dev": "tsx --watch src/daemon.ts",
     "postinstall": "node scripts/postinstall.js",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build:ts"
   },
   "engines": {
     "node": ">=18"

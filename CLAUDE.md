@@ -9,10 +9,12 @@ Attache is a multi-modal AI assistant daemon that orchestrates Copilot SDK sessi
 ## Commands
 
 ```bash
-npm run build          # TypeScript compilation (tsc)
-npm run daemon         # Run daemon via tsx
+npm run build          # Full build: TypeScript + GUI exe
+npm run build:ts       # TypeScript compilation only (tsc)
+npm run build:gui      # Publish GUI as single-file exe only
+npm start              # Start daemon + launch GUI
+npm run daemon         # Run daemon only via tsx
 npm run dev            # Watch mode for daemon (tsx watch)
-npm run build:gui      # Publish GUI as single-file exe
 ```
 
 ### Desktop GUI (Windows only)
