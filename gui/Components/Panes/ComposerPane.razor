@@ -12,7 +12,22 @@
         </div>
     </div>
     <div class="composer-row" style="position: relative; flex-direction: column; align-items: stretch;">
-        @if (_showSlashMenu && _filteredCommands.Count > 0)
+        @if (_showParamMenu && _filteredParams.Count > 0)
+        {
+            <div class="slash-menu">
+                @for (var i = 0; i < _filteredParams.Count; i++)
+                {
+                    var idx = i;
+                    var p = _filteredParams[idx];
+                    <div class="slash-item @(idx == _selectedSlashIndex ? "selected" : "")"
+                         @onclick="() => ClickParam(idx)">
+                        <span class="slash-command">@p.Id</span>
+                        <span class="slash-desc">@p.Label</span>
+                    </div>
+                }
+            </div>
+        }
+        else if (_showSlashMenu && _filteredCommands.Count > 0)
         {
             <div class="slash-menu">
                 @for (var i = 0; i < _filteredCommands.Count; i++)
@@ -52,9 +67,15 @@
     private string _input = "";
     private ElementReference _textareaRef;
     private bool _showSlashMenu;
+    private bool _showParamMenu;
     private int _selectedSlashIndex;
     private List<SlashCommand> _filteredCommands = [];
+    private List<ParamOption> _filteredParams = [];
+    private string _activeCommand = "";
     private DotNetObjectReference<ComposerPane>? _dotnetRef;
+    private List<ParamOption>? _cachedModelParams;
+
+    private record ParamOption(string Id, string Label);
 
     private string ConnectionStatus => State.ConnectionState switch
     {
@@ -72,39 +93,84 @@
 
     private void HandleStateChanged()
     {
+        // Invalidate model cache when state changes (e.g. provider switch, reconnect)
+        _cachedModelParams = null;
         InvokeAsync(StateHasChanged);
     }
 
     private void OnInputChanged(ChangeEventArgs e)
     {
         _input = e.Value?.ToString() ?? "";
-        UpdateSlashPredictions();
+        _ = UpdateSlashPredictionsAsync();
     }
 
-    private void UpdateSlashPredictions()
+    private async Task UpdateSlashPredictionsAsync()
     {
-        var wasOpen = _showSlashMenu;
+        var wasMenuOpen = _showSlashMenu || _showParamMenu;
 
-        if (_input.StartsWith("/") && State.Capabilities?.SlashCommands is { Count: > 0 } commands)
+        _showSlashMenu = false;
+        _showParamMenu = false;
+        _filteredCommands = [];
+        _filteredParams = [];
+
+        if (_input.StartsWith("/"))
         {
-            var prefix = _input.ToLowerInvariant();
-            _filteredCommands = commands
-                .Where(c => c.Command.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-                .Take(8)
-                .ToList();
-            _showSlashMenu = _filteredCommands.Count > 0;
-            _selectedSlashIndex = 0;
-        }
-        else
-        {
-            _showSlashMenu = false;
-            _filteredCommands = [];
+            // Check if input matches "/<command> <partial-arg>" pattern
+            var spaceIdx = _input.IndexOf(' ');
+            if (spaceIdx > 0)
+            {
+                var cmd = _input[..spaceIdx].ToLowerInvariant();
+                var argPrefix = _input[(spaceIdx + 1)..].Trim().ToLowerInvariant();
+                await TryShowParamMenuAsync(cmd, argPrefix);
+            }
+            else if (State.Capabilities?.SlashCommands is { Count: > 0 } commands)
+            {
+                // Still typing the command name
+                var prefix = _input.ToLowerInvariant();
+                _filteredCommands = commands
+                    .Where(c => c.Command.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    .Take(8)
+                    .ToList();
+                _showSlashMenu = _filteredCommands.Count > 0;
+                _selectedSlashIndex = 0;
+            }
         }
 
-        if (wasOpen != _showSlashMenu)
+        var isMenuOpen = _showSlashMenu || _showParamMenu;
+        if (wasMenuOpen != isMenuOpen)
         {
-            _ = JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, _showSlashMenu);
+            await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, isMenuOpen);
         }
+        StateHasChanged();
+    }
+
+    private async Task TryShowParamMenuAsync(string command, string argPrefix)
+    {
+        List<ParamOption>? options = command switch
+        {
+            "/model" => await GetModelParamsAsync(),
+            "/provider" => [new("copilot", "Copilot SDK"), new("claude", "Claude Agent SDK")],
+            _ => null
+        };
+
+        if (options is null || options.Count == 0) return;
+
+        _activeCommand = command;
+        _filteredParams = string.IsNullOrEmpty(argPrefix)
+            ? options.Take(12).ToList()
+            : options.Where(p => p.Id.Contains(argPrefix, StringComparison.OrdinalIgnoreCase)
+                               || p.Label.Contains(argPrefix, StringComparison.OrdinalIgnoreCase))
+                     .Take(12).ToList();
+        _showParamMenu = _filteredParams.Count > 0;
+        _selectedSlashIndex = 0;
+    }
+
+    private async Task<List<ParamOption>> GetModelParamsAsync()
+    {
+        if (_cachedModelParams is not null) return _cachedModelParams;
+        var models = await Api.GetModelsAsync();
+        _cachedModelParams = models.Select(m => new ParamOption(m.Id, m.Name)).ToList();
+        return _cachedModelParams;
     }
 
     /// <summary>True when a command needs no arguments and can be sent immediately.</summary>
@@ -115,27 +181,61 @@
     [JSInvokable("HandleSlashKey")]
     public async Task HandleSlashKeyAsync(string key)
     {
-        switch (key)
+        if (_showParamMenu)
         {
-            case "ArrowDown":
-                _selectedSlashIndex = (_selectedSlashIndex + 1) % _filteredCommands.Count;
-                StateHasChanged();
-                break;
-            case "ArrowUp":
-                _selectedSlashIndex = (_selectedSlashIndex - 1 + _filteredCommands.Count) % _filteredCommands.Count;
-                StateHasChanged();
-                break;
-            case "Tab":
-                await FillSlashCommand(_selectedSlashIndex);
-                break;
-            case "Enter":
-                await ActivateSlashCommand(_selectedSlashIndex);
-                break;
-            case "Escape":
-                _showSlashMenu = false;
-                await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
-                StateHasChanged();
-                break;
+            var count = _filteredParams.Count;
+            if (count == 0) return;
+            switch (key)
+            {
+                case "ArrowDown":
+                    _selectedSlashIndex = (_selectedSlashIndex + 1) % count;
+                    StateHasChanged();
+                    break;
+                case "ArrowUp":
+                    _selectedSlashIndex = (_selectedSlashIndex - 1 + count) % count;
+                    StateHasChanged();
+                    break;
+                case "Tab":
+                    await FillParam(_selectedSlashIndex);
+                    break;
+                case "Enter":
+                    await ActivateParam(_selectedSlashIndex);
+                    break;
+                case "Escape":
+                    _showParamMenu = false;
+                    await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+                    StateHasChanged();
+                    break;
+            }
+            return;
+        }
+
+        if (_showSlashMenu)
+        {
+            var count = _filteredCommands.Count;
+            if (count == 0) return;
+            switch (key)
+            {
+                case "ArrowDown":
+                    _selectedSlashIndex = (_selectedSlashIndex + 1) % count;
+                    StateHasChanged();
+                    break;
+                case "ArrowUp":
+                    _selectedSlashIndex = (_selectedSlashIndex - 1 + count) % count;
+                    StateHasChanged();
+                    break;
+                case "Tab":
+                    await FillSlashCommand(_selectedSlashIndex);
+                    break;
+                case "Enter":
+                    await ActivateSlashCommand(_selectedSlashIndex);
+                    break;
+                case "Escape":
+                    _showSlashMenu = false;
+                    await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+                    StateHasChanged();
+                    break;
+            }
         }
     }
 
@@ -163,7 +263,34 @@
         }
     }
 
-    /// <summary>Fill the input with the command + trailing space so the user can type args.</summary>
+    private async Task ClickParam(int index) => await ActivateParam(index);
+
+    /// <summary>Fill the input with command + selected parameter value.</summary>
+    private async Task FillParam(int index)
+    {
+        if (index < 0 || index >= _filteredParams.Count) return;
+        var p = _filteredParams[index];
+        _input = $"{_activeCommand} {p.Id}";
+        _showParamMenu = false;
+        _filteredParams = [];
+        await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+        await JS.InvokeVoidAsync("attache.setComposerValue", _textareaRef, _input);
+        StateHasChanged();
+    }
+
+    /// <summary>Select parameter and send the command immediately.</summary>
+    private async Task ActivateParam(int index)
+    {
+        if (index < 0 || index >= _filteredParams.Count) return;
+        var p = _filteredParams[index];
+        var fullCommand = $"{_activeCommand} {p.Id}";
+        _showParamMenu = false;
+        _filteredParams = [];
+        await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+        await DoSend(fullCommand);
+    }
+
+    /// <summary>Fill the input with the command + trailing space, then show param popup if applicable.</summary>
     private async Task FillSlashCommand(int index)
     {
         if (index < 0 || index >= _filteredCommands.Count) return;
@@ -171,8 +298,9 @@
         _input = cmd.Command + " ";
         _showSlashMenu = false;
         _filteredCommands = [];
-        await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
         await JS.InvokeVoidAsync("attache.setComposerValue", _textareaRef, _input);
+        // Trigger param popup for commands that accept parameters
+        await UpdateSlashPredictionsAsync();
         StateHasChanged();
     }
 
@@ -193,6 +321,8 @@
     {
         _input = "";
         _showSlashMenu = false;
+        _showParamMenu = false;
+        _filteredParams = [];
         await JS.InvokeVoidAsync("attache.clearComposer", _textareaRef);
         State.AddUserMessage(text);
 

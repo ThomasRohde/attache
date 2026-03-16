@@ -104,7 +104,7 @@ export function createBot(): Bot {
   bot.command("provider", async (ctx) => {
     const arg = ctx.match?.trim();
     if (arg) {
-      const supported = ["copilot", "claude", "codex"];
+      const supported = ["copilot", "claude"];
       if (!supported.includes(arg)) {
         await ctx.reply(`Unknown provider '${arg}'. Supported: ${supported.join(", ")}`);
         return;
