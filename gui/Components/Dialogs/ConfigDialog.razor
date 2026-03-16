@@ -33,24 +33,13 @@
                         }
                     </div>
                     <div class="form-group">
-                        <label>
-                            <input type="checkbox" @bind="_autoRouting" />
-                            Enable auto-routing
-                        </label>
-                        <div class="hint">Automatically selects the best model tier for each message.</div>
-                    </div>
-                    <div class="form-group">
                         <label>Default Model</label>
-                        <select @bind="_model" disabled="@_autoRouting">
+                        <select @bind="_model">
                             @foreach (var m in _models)
                             {
                                 <option value="@m.Id">@m.DisplayLabel</option>
                             }
                         </select>
-                        @if (_autoRouting)
-                        {
-                            <div class="hint">Model is selected automatically when auto-routing is enabled.</div>
-                        }
                     </div>
                     break;
 
@@ -136,7 +125,6 @@
     private string _model = "";
     private string _backend = "copilot";
     private string _initialBackend = "copilot";
-    private bool _autoRouting;
     private string _displayName = "";
     private string _workfolder = "";
     private string _telegramToken = "";
@@ -173,11 +161,6 @@
         if (!string.IsNullOrEmpty(_model) && !_models.Any(m => m.Id == _model))
             _models.Insert(0, new ModelInfo { Id = _model, Name = _model });
 
-        if (State.Diagnostics?.Routing?.AutoRouting is not null)
-        {
-            _autoRouting = State.Diagnostics.Routing.AutoRouting.Enabled;
-        }
-
         if (State.Workfolder is not null)
         {
             _workfolder = State.Workfolder.Path;
@@ -205,11 +188,10 @@
 
                     if (!needsRestart)
                     {
-                        // Only save model/auto settings if not restarting
-                        // (they'll use new provider defaults after restart)
+                        // Only save model if not restarting
+                        // (it'll use new provider defaults after restart)
                         if (!string.IsNullOrWhiteSpace(_model))
                             await Api.PostModelAsync(_model.Trim());
-                        await Api.PostAutoAsync(_autoRouting);
                     }
 
                     if (needsRestart)

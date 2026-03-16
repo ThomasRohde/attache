@@ -45,6 +45,7 @@ const configSchema = z.object({
   PREVENT_SLEEP: z.string().optional(),
   ATTACHE_WORKFOLDER: z.string().min(1).optional(),
   ATTACHE_BACKEND: z.enum(["copilot", "claude", "codex"]).optional(),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
 });
 
 const raw = configSchema.parse({
@@ -58,6 +59,7 @@ const raw = configSchema.parse({
   PREVENT_SLEEP: getEnvValue("ATTACHE_PREVENT_SLEEP"),
   ATTACHE_WORKFOLDER: getEnvValue("ATTACHE_WORKFOLDER"),
   ATTACHE_BACKEND: getEnvValue("ATTACHE_BACKEND") as "copilot" | "claude" | "codex" | undefined,
+  ANTHROPIC_API_KEY: getEnvValue("ANTHROPIC_API_KEY"),
 });
 
 const parsedUserId = parseStrictPositiveInteger(raw.AUTHORIZED_USER_ID, "AUTHORIZED_USER_ID");
@@ -114,6 +116,9 @@ export const config = {
   },
   get backend(): string {
     return raw.ATTACHE_BACKEND || "copilot";
+  },
+  get anthropicApiKey(): string | undefined {
+    return raw.ANTHROPIC_API_KEY;
   },
 };
 

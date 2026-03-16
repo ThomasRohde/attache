@@ -7,7 +7,6 @@ import { loadMcpConfig } from "./mcp-config.js";
 import { getSkillDirectories } from "./skills.js";
 import { logConversation, getState, setState, deleteState, getMemorySummary, getRecentConversation } from "../store/db.js";
 import { SESSIONS_DIR } from "../paths.js";
-import { resolveModel, type Tier, type RouteResult } from "./router.js";
 import { LOG_PREFIX } from "../identity.js";
 
 const MAX_RETRIES = 3;
@@ -15,6 +14,7 @@ const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000];
 const HEALTH_CHECK_INTERVAL_MS = 30_000;
 
 const ORCHESTRATOR_SESSION_KEY = "orchestrator_session_id";
+const ORCHESTRATOR_BACKEND_KEY = "orchestrator_backend";
 
 export type MessageSource =
   | { type: "telegram"; chatId: number; messageId: number }
@@ -42,25 +42,14 @@ let backendClient: BackendClient | undefined;
 const workers = new Map<string, WorkerInfo>();
 let healthCheckTimer: ReturnType<typeof setInterval> | undefined;
 
-// Router state — tracks model across the session
-let currentSessionModel: string | undefined;
-let recentTiers: Tier[] = [];
-let lastRouteResult: RouteResult | undefined;
-
-export function getLastRouteResult(): RouteResult | undefined {
-  return lastRouteResult;
-}
-
-/** The model that will be used for the next session (auto-routed or manual). */
+/** The model that will be used for the next session. */
 export function getActiveModel(): string {
-  return currentSessionModel || config.copilotModel;
+  return config.copilotModel;
 }
 
 /** Reset session state after a manual model switch (e.g. via /model command). */
 export function resetForModelSwitch(): void {
   orchestratorSession = undefined;
-  currentSessionModel = undefined;
-  lastRouteResult = undefined;
   deleteState(ORCHESTRATOR_SESSION_KEY);
 }
 
@@ -148,7 +137,6 @@ function startHealthCheck(): void {
         await ensureClient();
         // Session may need recovery after client reset
         orchestratorSession = undefined;
-        currentSessionModel = undefined;
       }
     } catch (err) {
       console.error(`${LOG_PREFIX} Health check error:`, err instanceof Error ? err.message : err);
@@ -177,7 +165,7 @@ async function createOrResumeSession(): Promise<BackendSession> {
   const client = await ensureClient();
   const { tools, mcpServers, skillDirectories } = getSessionConfig();
   const memorySummary = getMemorySummary();
-  const modelToUse = currentSessionModel || config.copilotModel;
+  const modelToUse = config.copilotModel;
 
   const infiniteSessions = client.capabilities.infiniteSessions ? {
     enabled: true,
@@ -197,6 +185,8 @@ async function createOrResumeSession(): Promise<BackendSession> {
         systemMessage: getOrchestratorSystemMessage(memorySummary || undefined, {
           selfEditEnabled: config.selfEditEnabled,
           assistantDisplayName: config.assistantLabel,
+          backendName: backendClient!.name,
+          apiPort: config.apiPort,
         }),
         tools: client.capabilities.customTools ? tools : undefined,
         mcpServers,
@@ -204,7 +194,6 @@ async function createOrResumeSession(): Promise<BackendSession> {
         infiniteSessions,
       });
       console.log(`${LOG_PREFIX} Resumed orchestrator session successfully (model: ${modelToUse})`);
-      currentSessionModel = modelToUse;
       return session;
     } catch (err) {
       console.log(`${LOG_PREFIX} Could not resume session: ${err instanceof Error ? err.message : err}. Creating new.`);
@@ -246,13 +235,21 @@ async function createOrResumeSession(): Promise<BackendSession> {
     }
   }
 
-  currentSessionModel = modelToUse;
   return session;
 }
 
 export async function initOrchestrator(client: BackendClient): Promise<void> {
   backendClient = client;
   const { mcpServers, skillDirectories } = getSessionConfig();
+
+  // If the backend changed since last run, clear saved session.
+  // Sessions are not portable between backends.
+  const previousBackend = getState(ORCHESTRATOR_BACKEND_KEY);
+  if (previousBackend && previousBackend !== client.name) {
+    console.log(`${LOG_PREFIX} Backend changed from '${previousBackend}' to '${client.name}' — resetting session`);
+    deleteState(ORCHESTRATOR_SESSION_KEY);
+  }
+  setState(ORCHESTRATOR_BACKEND_KEY, client.name);
 
   // Validate configured model against available models (if backend supports listing)
   if (client.capabilities.modelListing) {
@@ -261,8 +258,9 @@ export async function initOrchestrator(client: BackendClient): Promise<void> {
       const configured = config.copilotModel;
       const isAvailable = models.some((m) => m.id === configured);
       if (!isAvailable) {
-        console.log(`${LOG_PREFIX} ⚠️ Configured model '${configured}' is not available. Falling back to '${DEFAULT_MODEL}'.`);
-        config.copilotModel = DEFAULT_MODEL;
+        const fallback = DEFAULT_MODEL;
+        console.log(`${LOG_PREFIX} ⚠️ Configured model '${configured}' is not available. Falling back to '${fallback}'.`);
+        config.copilotModel = fallback;
       }
     } catch (err) {
       console.log(`${LOG_PREFIX} Could not validate model (will use '${config.copilotModel}' as-is): ${err instanceof Error ? err.message : err}`);
@@ -331,10 +329,9 @@ async function executeOnSession(prompt: string, callback: MessageCallback): Prom
   } catch (err) {
     // If the session is broken, invalidate it so it's recreated on next attempt
     const msg = err instanceof Error ? err.message : String(err);
-    if (/closed|destroy|disposed|invalid|expired|not found/i.test(msg)) {
+    if (/closed|destroy|disposed|invalid|expired|not found|no conversation found/i.test(msg)) {
       console.log(`${LOG_PREFIX} Session appears dead, will recreate: ${msg}`);
       orchestratorSession = undefined;
-      currentSessionModel = undefined;
       deleteState(ORCHESTRATOR_SESSION_KEY);
     }
     throw err;
@@ -360,21 +357,6 @@ async function processQueue(): Promise<void> {
     const item = messageQueue.shift()!;
     currentSourceChannel = item.sourceChannel;
     try {
-      // Route the model before executing
-      const routeResult = await resolveModel(item.prompt, currentSessionModel || config.copilotModel, recentTiers, backendClient);
-      if (routeResult.switched) {
-        console.log(`${LOG_PREFIX} Router: switching to ${routeResult.model} (${routeResult.overrideName || routeResult.tier})`);
-        orchestratorSession = undefined;
-        deleteState(ORCHESTRATOR_SESSION_KEY);
-      }
-      // Track the routed model separately from config.copilotModel (user's preference)
-      currentSessionModel = routeResult.model;
-      if (routeResult.tier) {
-        recentTiers.push(routeResult.tier);
-        if (recentTiers.length > 5) recentTiers = recentTiers.slice(-5);
-      }
-      lastRouteResult = routeResult;
-
       const result = await executeOnSession(item.prompt, item.callback);
       item.resolve(result);
     } catch (err) {
@@ -388,7 +370,7 @@ async function processQueue(): Promise<void> {
 
 function isRecoverableError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|disconnect|connection|EPIPE|ECONNRESET|ECONNREFUSED|socket|closed|ENOENT|spawn|not found|expired|stale/i.test(msg);
+  return /timeout|disconnect|connection|EPIPE|ECONNRESET|ECONNREFUSED|socket|closed|ENOENT|spawn|not found|no conversation found|expired|stale/i.test(msg);
 }
 
 export async function sendToOrchestrator(

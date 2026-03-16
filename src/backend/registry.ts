@@ -1,30 +1,6 @@
-import type { BackendClient, BackendTierDefaults } from "./types.js";
+import type { BackendClient } from "./types.js";
 import { CopilotBackendClient } from "./providers/copilot/index.js";
-
-// ---------------------------------------------------------------------------
-// Tier defaults per backend
-// ---------------------------------------------------------------------------
-
-const TIER_DEFAULTS: Record<string, BackendTierDefaults> = {
-  copilot: {
-    fast: "gpt-4.1",
-    standard: "claude-sonnet-4.6",
-    premium: "claude-opus-4.6",
-    classifier: "gpt-4.1",
-  },
-  claude: {
-    fast: "claude-haiku-4-5-20251001",
-    standard: "claude-sonnet-4-6",
-    premium: "claude-opus-4-6",
-    classifier: "claude-haiku-4-5-20251001",
-  },
-  codex: {
-    fast: "gpt-5.3-codex-spark",
-    standard: "gpt-5.3-codex",
-    premium: "gpt-5.4",
-    classifier: "gpt-5.3-codex-spark",
-  },
-};
+import { ClaudeBackendClient } from "./providers/claude/index.js";
 
 // ---------------------------------------------------------------------------
 // Singleton backend client
@@ -46,10 +22,12 @@ export async function initBackendClient(name?: string): Promise<BackendClient> {
     case "copilot":
       backendClient = new CopilotBackendClient();
       break;
-    // Phase 3: claude
+    case "claude":
+      backendClient = new ClaudeBackendClient();
+      break;
     // Phase 4: codex
     default:
-      throw new Error(`Unknown backend: '${backendName}'. Supported: copilot`);
+      throw new Error(`Unknown backend: '${backendName}'. Supported: copilot, claude`);
   }
 
   await backendClient.start();
@@ -70,11 +48,6 @@ export function getBackendClient(): BackendClient {
 /** Get the name of the active backend. */
 export function getBackendName(): string {
   return backendName;
-}
-
-/** Get tier defaults for the active backend. */
-export function getTierDefaults(): BackendTierDefaults {
-  return TIER_DEFAULTS[backendName] || TIER_DEFAULTS.copilot;
 }
 
 /** Stop the backend client and clear the singleton. */

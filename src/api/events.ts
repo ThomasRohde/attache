@@ -1,5 +1,3 @@
-import type { RouteResult } from "../copilot/router.js";
-
 export const API_EVENT_SCHEMA_VERSION = 1 as const;
 
 export type ApiEventName =
@@ -11,15 +9,8 @@ export type ApiEventName =
 
 export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript";
 
-export interface RoutePayload {
-  model: RouteResult["model"];
-  routerMode: RouteResult["routerMode"];
-  tier: RouteResult["tier"];
-  overrideName?: string;
-}
-
 type ConnectedData = { connectionId: string };
-type MessageData = { content: string; route?: RoutePayload };
+type MessageData = { content: string };
 type TranscriptData = { role: string; content: string; source: string };
 type EmptyData = {};
 
@@ -56,11 +47,9 @@ export function createDeltaEvent(content: string): ApiEventEnvelope<MessageData>
 
 export function createCompleteEvent(
   content: string,
-  route?: RoutePayload,
 ): ApiEventEnvelope<MessageData> {
   return withEnvelope("orchestrator.message.complete", "message", {
     content,
-    ...(route ? { route } : {}),
   });
 }
 

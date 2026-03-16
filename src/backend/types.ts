@@ -2,8 +2,8 @@
  * Abstract backend interfaces for multi-agent support.
  *
  * Attache can run on Copilot SDK, Claude Agent SDK, or OpenAI Codex SDK.
- * These interfaces define the common surface used by the orchestrator,
- * workers, classifier, and router.
+ * These interfaces define the common surface used by the orchestrator
+ * and workers.
  */
 
 export type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
@@ -77,11 +77,4 @@ export interface BackendClient {
   listModels(): Promise<ModelInfo[]>;
   createSession(config: SessionConfig): Promise<BackendSession>;
   resumeSession(sessionId: string, config: SessionConfig): Promise<BackendSession>;
-}
-
-export interface BackendTierDefaults {
-  fast: string;
-  standard: string;
-  premium: string;
-  classifier: string;
 }

@@ -61,7 +61,6 @@ Telegram / GUI / HTTP API
 
 ### Key subsystems
 
-- **Router** (`src/copilot/router.ts`): Auto-selects model tier (fast/standard/premium) based on message complexity. Uses gpt-4.1 as classifier. Design tasks always route to opus.
 - **Skills** (`src/copilot/skills.ts`): Three directories — bundled (`skills/`), local (`~/.attache/skills`), global (`~/.agents/skills`). SKILL.md format with YAML frontmatter.
 - **Database** (`src/store/db.ts`): better-sqlite3 with WAL mode. Tables: `worker_sessions`, `attache_state`, `conversation_log` (max 200), `memories`.
 - **API** (`src/api/server.ts`): SSE streaming via `/stream`, message submission via `/message`, transcript via `/transcript`. Schema-versioned events (`src/api/events.ts`).

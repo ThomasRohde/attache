@@ -3,16 +3,17 @@ import type { Request, Response, NextFunction } from "express";
 import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { randomBytes } from "crypto";
 import { execSync } from "child_process";
-import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResult, getActiveModel } from "../copilot/orchestrator.js";
+import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistModel, persistEnvVar } from "../config.js";
-import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
-import { getDb, searchMemories, logConversation } from "../store/db.js";
+import { getDb, searchMemories, logConversation, addMemory, removeMemory } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
-import { API_TOKEN_PATH, ensureAttacheHome } from "../paths.js";
-import { TOOL_REGISTRY } from "../copilot/tools.js";
+import { API_TOKEN_PATH, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
+import { join, sep, resolve } from "path";
+import { homedir } from "os";
+import { TOOL_REGISTRY, type WorkerInfo } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
 import { getBackendClient, getBackendName } from "../backend/registry.js";
 import {
@@ -184,10 +185,158 @@ app.post("/workers/:id/cancel", async (req: Request, res: Response) => {
   });
 });
 
+// Create a worker session (for Claude backend — agent calls via curl)
+const BLOCKED_WORKER_DIRS = [
+  ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
+  ".kube", ".docker", ".npmrc", ".pypirc",
+];
+const MAX_CONCURRENT_WORKERS = 5;
+
+app.post("/workers", async (req: Request, res: Response) => {
+  const { name, working_dir, initial_prompt } = req.body as {
+    name?: string;
+    working_dir?: string;
+    initial_prompt?: string;
+  };
+
+  if (!name || typeof name !== "string") {
+    res.status(400).json({ error: "Missing 'name' in request body" });
+    return;
+  }
+
+  const workers = getWorkers();
+  if (workers.has(name)) {
+    res.status(409).json({ error: `Worker '${name}' already exists.` });
+    return;
+  }
+
+  const workingDir = working_dir || process.cwd();
+  const home = homedir();
+  const resolvedDir = resolve(workingDir);
+  for (const blocked of BLOCKED_WORKER_DIRS) {
+    const blockedPath = join(home, blocked);
+    if (resolvedDir === blockedPath || resolvedDir.startsWith(blockedPath + sep)) {
+      res.status(403).json({ error: `Refused: '${workingDir}' is a sensitive directory.` });
+      return;
+    }
+  }
+
+  if (workers.size >= MAX_CONCURRENT_WORKERS) {
+    const names = Array.from(workers.keys()).join(", ");
+    res.status(429).json({ error: `Worker limit reached (${MAX_CONCURRENT_WORKERS}). Active: ${names}.` });
+    return;
+  }
+
+  try {
+    const client = getBackendClient();
+    const session = await client.createSession({
+      model: config.copilotModel,
+      configDir: SESSIONS_DIR,
+      workingDirectory: workingDir,
+    });
+
+    const worker: WorkerInfo = {
+      name,
+      session,
+      workingDir,
+      status: "idle",
+    };
+    workers.set(name, worker);
+
+    const db = getDb();
+    db.prepare(
+      `INSERT OR REPLACE INTO worker_sessions (name, copilot_session_id, working_dir, status) VALUES (?, ?, ?, 'idle')`,
+    ).run(name, session.sessionId, workingDir);
+
+    if (initial_prompt) {
+      worker.status = "running";
+      worker.startedAt = Date.now();
+      db.prepare(
+        `UPDATE worker_sessions SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE name = ?`,
+      ).run(name);
+
+      const timeoutMs = config.workerTimeoutMs;
+      session.sendAndWait(`Working directory: ${workingDir}\n\n${initial_prompt}`, timeoutMs)
+        .then((result) => {
+          if (worker.cancelled) return;
+          worker.lastOutput = result.content || "No response";
+          feedBackgroundResult(name, worker.lastOutput);
+        })
+        .catch((err) => {
+          if (worker.cancelled) return;
+          const msg = err instanceof Error ? err.message : String(err);
+          worker.lastOutput = `Worker '${name}' failed: ${msg}`;
+          feedBackgroundResult(name, worker.lastOutput);
+        })
+        .finally(() => {
+          session.destroy().catch(() => {});
+          workers.delete(name);
+          getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(name);
+        });
+
+      res.json({ status: "dispatched", name, workingDir });
+      return;
+    }
+
+    res.json({ status: "created", name, workingDir, sessionId: session.sessionId });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(500).json({ error: `Failed to create worker: ${msg}` });
+  }
+});
+
+// Send prompt to a worker (for Claude backend — agent calls via curl)
+app.post("/workers/:id/prompt", async (req: Request, res: Response) => {
+  const workerId = getWorkerIdParam(req);
+  const { prompt } = req.body as { prompt?: string };
+
+  if (!prompt || typeof prompt !== "string") {
+    res.status(400).json({ error: "Missing 'prompt' in request body" });
+    return;
+  }
+
+  const worker = findWorker(workerId);
+  if (!worker) {
+    res.status(404).json({ error: `No worker named '${workerId}'.` });
+    return;
+  }
+  if (worker.status === "running") {
+    res.status(409).json({ error: `Worker '${workerId}' is currently busy.` });
+    return;
+  }
+
+  worker.status = "running";
+  worker.startedAt = Date.now();
+  const db = getDb();
+  db.prepare(
+    `UPDATE worker_sessions SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE name = ?`,
+  ).run(workerId);
+
+  const timeoutMs = config.workerTimeoutMs;
+  worker.session.sendAndWait(prompt, timeoutMs)
+    .then((result) => {
+      if (worker.cancelled) return;
+      worker.lastOutput = result.content || "No response";
+      feedBackgroundResult(workerId, worker.lastOutput);
+    })
+    .catch((err) => {
+      if (worker.cancelled) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      worker.lastOutput = `Worker '${workerId}' failed: ${msg}`;
+      feedBackgroundResult(workerId, worker.lastOutput);
+    })
+    .finally(() => {
+      worker.session.destroy().catch(() => {});
+      getWorkers().delete(workerId);
+      getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(workerId);
+    });
+
+  res.json({ status: "dispatched", name: workerId });
+});
+
 app.get("/diagnostics", (_req: Request, res: Response) => {
   const workers = Array.from(getWorkers().values()).map(summarizeWorker);
   const identity = getEffectiveIdentity();
-  const lastRoute = getLastRouteResult();
 
   res.json({
     status: "ok",
@@ -210,11 +359,9 @@ app.get("/diagnostics", (_req: Request, res: Response) => {
     backend: {
       name: getBackendName(),
     },
-    routing: {
-      currentModel: config.copilotModel,
-      activeModel: getActiveModel(),
-      autoRouting: getRouterConfig(),
-      lastRoute: lastRoute ?? null,
+    model: {
+      current: config.copilotModel,
+      active: getActiveModel(),
     },
     workers: {
       count: workers.length,
@@ -301,29 +448,7 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       // Reset orchestrator session so next message uses the new model
       const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
       resetForModelSwitch();
-      // Disable auto-routing — user explicitly chose a model
-      const wasAutoRouting = getRouterConfig().enabled;
-      if (wasAutoRouting) {
-        updateRouterConfig({ enabled: false });
-      }
-      const note = wasAutoRouting ? " (auto-routing disabled)" : "";
-      return { handled: true, result: `Switched model from ${previous} to ${args}${note}` };
-    }
-
-    case "/auto": {
-      if (!args) {
-        const rc = getRouterConfig();
-        return { handled: true, result: `Auto-routing: ${rc.enabled ? "enabled" : "disabled"}` };
-      }
-      if (args === "on") {
-        updateRouterConfig({ enabled: true });
-        return { handled: true, result: "Auto-routing enabled" };
-      }
-      if (args === "off") {
-        updateRouterConfig({ enabled: false });
-        return { handled: true, result: "Auto-routing disabled" };
-      }
-      return { handled: true, result: `Usage: /auto on|off` };
+      return { handled: true, result: `Switched model from ${previous} to ${args}` };
     }
 
     case "/provider": {
@@ -418,17 +543,9 @@ function dispatchToOrchestrator(prompt: string, connectionId: string, res: Respo
     prompt,
     { type: "tui", connectionId },
     (text: string, done: boolean) => {
-      const routeResult = done ? getLastRouteResult() : undefined;
-      const route = routeResult ? {
-        model: routeResult.model,
-        routerMode: routeResult.routerMode,
-        tier: routeResult.tier,
-        ...(routeResult.overrideName ? { overrideName: routeResult.overrideName } : {}),
-      } : undefined;
-
       if (done) {
         // Broadcast complete event to ALL SSE clients
-        const event = createCompleteEvent(text, route);
+        const event = createCompleteEvent(text);
         for (const [, sseRes] of sseClients) {
           sseRes.write(encodeSseEvent(event));
         }
@@ -505,31 +622,6 @@ app.post("/model", async (req: Request, res: Response) => {
   res.json({ previous, current: model });
 });
 
-// Get auto-routing config
-app.get("/auto", (_req: Request, res: Response) => {
-  const routerConfig = getRouterConfig();
-  const lastRoute = getLastRouteResult();
-  res.json({
-    ...routerConfig,
-    currentModel: config.copilotModel,
-    lastRoute: lastRoute || null,
-  });
-});
-
-// Update auto-routing config
-app.post("/auto", (req: Request, res: Response) => {
-  const body = req.body as Partial<{
-    enabled: boolean;
-    tierModels: Record<string, string>;
-    cooldownMessages: number;
-  }>;
-
-  const updated = updateRouterConfig(body);
-  console.log(`${LOG_PREFIX} Auto-routing ${updated.enabled ? "enabled" : "disabled"}`);
-
-  res.json(updated);
-});
-
 // Get current backend provider
 app.get("/backend", (_req: Request, res: Response) => {
   const client = getBackendClient();
@@ -558,9 +650,51 @@ app.post("/backend", (req: Request, res: Response) => {
 });
 
 // List memories
-app.get("/memory", (_req: Request, res: Response) => {
-  const memories = searchMemories(undefined, undefined, 100);
+app.get("/memory", (req: Request, res: Response) => {
+  const keyword = typeof req.query.keyword === "string" ? req.query.keyword : undefined;
+  const category = typeof req.query.category === "string" ? req.query.category : undefined;
+  const memories = searchMemories(keyword, category, 100);
   res.json(memories);
+});
+
+// Add a memory (for Claude backend — agent calls via curl)
+app.post("/memory", (req: Request, res: Response) => {
+  const { category, content, source } = req.body as {
+    category?: string;
+    content?: string;
+    source?: string;
+  };
+  const validCategories = ["preference", "fact", "project", "person", "routine"];
+  if (!category || !validCategories.includes(category)) {
+    res.status(400).json({ error: `Invalid category. Must be one of: ${validCategories.join(", ")}` });
+    return;
+  }
+  if (!content || typeof content !== "string") {
+    res.status(400).json({ error: "Missing 'content' in request body" });
+    return;
+  }
+  const memSource = source === "auto" ? "auto" : "user";
+  const id = addMemory(
+    category as "preference" | "fact" | "project" | "person" | "routine",
+    content,
+    memSource,
+  );
+  res.json({ id, category, content, source: memSource });
+});
+
+// Remove a memory by ID (for Claude backend — agent calls via curl)
+app.delete("/memory/:id", (req: Request, res: Response) => {
+  const memId = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+  if (!Number.isFinite(memId) || memId <= 0) {
+    res.status(400).json({ error: "Invalid memory ID" });
+    return;
+  }
+  const removed = removeMemory(memId);
+  if (!removed) {
+    res.status(404).json({ error: `Memory #${memId} not found` });
+    return;
+  }
+  res.json({ ok: true, id: memId });
 });
 
 // List skills
@@ -584,7 +718,6 @@ app.delete("/skills/:slug", (req: Request, res: Response) => {
 app.get("/capabilities", (_req: Request, res: Response) => {
   const identity = getEffectiveIdentity();
   const skills = listSkills();
-  const routerConfig = getRouterConfig();
 
   const slashCommands: {
     command: string;
@@ -596,7 +729,6 @@ app.get("/capabilities", (_req: Request, res: Response) => {
   }[] = [
     { command: "/model", name: "Switch model", description: "Show or switch the active model", type: "builtIn", usage: "/model [name]" },
     { command: "/provider", name: "Provider", description: "Show or switch the backend provider", type: "builtIn", usage: "/provider [copilot|claude|codex]" },
-    { command: "/auto", name: "Auto-routing", description: "Toggle automatic model routing", type: "builtIn", usage: "/auto on|off" },
     { command: "/workers", name: "List workers", description: "Show active worker sessions", type: "builtIn" },
     { command: "/restart", name: "Restart", description: "Restart the daemon", type: "builtIn" },
   ];
@@ -628,15 +760,10 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     tools: TOOL_REGISTRY,
     model: {
       current: config.copilotModel,
-      autoRouting: {
-        enabled: routerConfig.enabled,
-        tierModels: routerConfig.tierModels,
-      },
     },
     features: {
       telegram: config.telegramEnabled,
       selfEdit: config.selfEditEnabled,
-      autoRouting: routerConfig.enabled,
     },
   });
 });
@@ -704,6 +831,7 @@ app.post("/config", (req: Request, res: Response) => {
     "ASSISTANT_DISPLAY_NAME",
     "ATTACHE_WORKFOLDER",
     "ATTACHE_BACKEND",
+    "ANTHROPIC_API_KEY",
   ]);
 
   let restartRequired = false;

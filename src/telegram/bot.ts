@@ -1,7 +1,6 @@
 import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
-import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult } from "../copilot/orchestrator.js";
-import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
+import { sendToOrchestrator, cancelCurrentMessage, getWorkers } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
 import { searchMemories } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
@@ -79,13 +78,7 @@ export function createBot(): Bot {
       // Reset orchestrator session so next message uses the new model
       const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
       resetForModelSwitch();
-      // Disable auto-routing — user explicitly chose a model
-      const wasAutoRouting = getRouterConfig().enabled;
-      if (wasAutoRouting) {
-        updateRouterConfig({ enabled: false });
-      }
-      const note = wasAutoRouting ? " (auto-routing disabled)" : "";
-      await ctx.reply(`Model: ${previous} → ${arg}${note}`);
+      await ctx.reply(`Model: ${previous} → ${arg}`);
     } else {
       await ctx.reply(`Current model: ${config.copilotModel}`);
     }
@@ -189,22 +182,9 @@ export function createBot(): Bot {
           broadcastTranscriptEntry("assistant", text, "telegram");
           // Send final message — use chunking for long responses, reply-quote original
           void (async () => {
-            // Append model indicator
-            const routeResult = getLastRouteResult();
-            let indicatorSuffix = "";
-            if (routeResult) {
-              indicatorSuffix = routeResult.routerMode === "auto"
-                ? `\n\n_⚡ auto · ${routeResult.model}_`
-                : `\n\n_${routeResult.model}_`;
-            }
-            const formatted = toTelegramMarkdown(text) + indicatorSuffix;
+            const formatted = toTelegramMarkdown(text);
             const chunks = chunkMessage(formatted);
-            const fallbackText = routeResult
-              ? text + (routeResult.routerMode === "auto"
-                  ? `\n\n⚡ auto · ${routeResult.model}`
-                  : `\n\n${routeResult.model}`)
-              : text;
-            const fallbackChunks = chunkMessage(fallbackText);
+            const fallbackChunks = chunkMessage(text);
             const sendChunk = async (chunk: string, fallback: string, isFirst: boolean) => {
               const opts = isFirst
                 ? { parse_mode: "MarkdownV2" as const, reply_parameters: replyParams }

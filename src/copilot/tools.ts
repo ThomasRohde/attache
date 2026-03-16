@@ -10,7 +10,6 @@ import { listSkills, createSkill, removeSkill } from "./skills.js";
 import { config, persistModel } from "../config.js";
 import { SESSIONS_DIR } from "../paths.js";
 import { getCurrentSourceChannel } from "./orchestrator.js";
-import { getRouterConfig, updateRouterConfig } from "./router.js";
 
 export const TOOL_REGISTRY: { name: string; description: string; category: string }[] = [
   { name: "create_worker_session", description: "Create a new worker session in a specific directory", category: "workers" },
@@ -25,7 +24,6 @@ export const TOOL_REGISTRY: { name: string; description: string; category: strin
   { name: "uninstall_skill", description: "Remove a skill from the local skills directory", category: "skills" },
   { name: "list_models", description: "List all available models", category: "models" },
   { name: "switch_model", description: "Switch the model for conversations", category: "models" },
-  { name: "toggle_auto", description: "Enable or disable automatic model routing", category: "models" },
   { name: "remember", description: "Save something to long-term memory", category: "memory" },
   { name: "recall", description: "Search long-term memory for stored information", category: "memory" },
   { name: "forget", description: "Remove a specific memory from long-term storage", category: "memory" },
@@ -384,35 +382,11 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           config.copilotModel = args.model_id;
           persistModel(args.model_id);
 
-          // Disable router when manually switching — user has explicit preference
-          if (getRouterConfig().enabled) {
-            updateRouterConfig({ enabled: false });
-            return `Switched model from '${previous}' to '${args.model_id}'. Auto-routing disabled (use /auto or toggle_auto to re-enable). Takes effect on next message.`;
-          }
-
           return `Switched model from '${previous}' to '${args.model_id}'. Takes effect on next message.`;
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return `Failed to switch model: ${msg}`;
         }
-      },
-    }),
-
-    defineTool("toggle_auto", {
-      description:
-        "Enable or disable automatic model routing (auto mode). When enabled, Attache automatically picks " +
-        "the best model (fast/standard/premium) for each message to save cost and optimize speed. " +
-        "Use when the user asks to turn auto-routing on or off.",
-      parameters: z.object({
-        enabled: z.boolean().describe("true to enable auto-routing, false to disable"),
-      }),
-      handler: async (args) => {
-        const updated = updateRouterConfig({ enabled: args.enabled });
-        if (args.enabled) {
-          const tiers = updated.tierModels;
-          return `Auto-routing enabled. Tier models:\n• fast: ${tiers.fast}\n• standard: ${tiers.standard}\n• premium: ${tiers.premium}\n\nAttache will automatically pick the best model for each message.`;
-        }
-        return `Auto-routing disabled. Using fixed model: ${config.copilotModel}`;
       },
     }),
 

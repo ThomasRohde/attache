@@ -75,18 +75,6 @@ public class CapModelInfo
 {
     [JsonPropertyName("current")]
     public string Current { get; set; } = "";
-
-    [JsonPropertyName("autoRouting")]
-    public CapAutoRouting? AutoRouting { get; set; }
-}
-
-public class CapAutoRouting
-{
-    [JsonPropertyName("enabled")]
-    public bool Enabled { get; set; }
-
-    [JsonPropertyName("tierModels")]
-    public Dictionary<string, string>? TierModels { get; set; }
 }
 
 public class CapFeatures
@@ -96,9 +84,6 @@ public class CapFeatures
 
     [JsonPropertyName("selfEdit")]
     public bool SelfEdit { get; set; }
-
-    [JsonPropertyName("autoRouting")]
-    public bool AutoRouting { get; set; }
 }
 
 public class CapBackend

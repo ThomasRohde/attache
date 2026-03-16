@@ -40,16 +40,9 @@
                 <div class="inspector-row">
                     <span class="label">Model</span>
                     <span class="value">
-                        @(State.Diagnostics.Routing?.ActiveModel ?? State.Diagnostics.Routing?.CurrentModel ?? "—")
+                        @(State.Diagnostics.Model?.Active ?? State.Diagnostics.Model?.Current ?? "—")
                     </span>
                 </div>
-                @if (State.Diagnostics.Routing?.AutoRouting?.Enabled == true)
-                {
-                    <div class="inspector-row">
-                        <span class="label">Routing</span>
-                        <span class="value" style="color: var(--green);">auto</span>
-                    </div>
-                }
                 <div class="inspector-row">
                     <span class="label">Workers</span>
                     <span class="value">@(State.Diagnostics.Workers?.Running ?? 0) / @(State.Diagnostics.Workers?.Count ?? 0)</span>

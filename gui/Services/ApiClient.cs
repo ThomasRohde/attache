@@ -163,19 +163,6 @@ public class ApiClient : IDisposable
         catch { return false; }
     }
 
-    public async Task<bool> PostAutoAsync(bool enabled)
-    {
-        TryLoadToken();
-        try
-        {
-            var body = JsonSerializer.Serialize(new { enabled });
-            using var content = new StringContent(body, Encoding.UTF8, "application/json");
-            var resp = await _http.PostAsync("/auto", content);
-            return resp.IsSuccessStatusCode;
-        }
-        catch { return false; }
-    }
-
     public async Task<string?> GetBackendAsync()
     {
         TryLoadToken();

@@ -19,8 +19,8 @@ public class DiagnosticsModel
     [JsonPropertyName("backend")]
     public BackendDiag? Backend { get; set; }
 
-    [JsonPropertyName("routing")]
-    public RoutingDiag? Routing { get; set; }
+    [JsonPropertyName("model")]
+    public ModelDiag? Model { get; set; }
 
     [JsonPropertyName("workers")]
     public WorkersDiag? Workers { get; set; }
@@ -80,37 +80,13 @@ public class IdentityDiag
     public string AssistantDisplayName { get; set; } = "";
 }
 
-public class RoutingDiag
+public class ModelDiag
 {
-    [JsonPropertyName("currentModel")]
-    public string CurrentModel { get; set; } = "";
+    [JsonPropertyName("current")]
+    public string Current { get; set; } = "";
 
-    [JsonPropertyName("activeModel")]
-    public string? ActiveModel { get; set; }
-
-    [JsonPropertyName("autoRouting")]
-    public AutoRoutingDiag? AutoRouting { get; set; }
-
-    [JsonPropertyName("lastRoute")]
-    public LastRouteDiag? LastRoute { get; set; }
-}
-
-public class AutoRoutingDiag
-{
-    [JsonPropertyName("enabled")]
-    public bool Enabled { get; set; }
-}
-
-public class LastRouteDiag
-{
-    [JsonPropertyName("model")]
-    public string? Model { get; set; }
-
-    [JsonPropertyName("routerMode")]
-    public string? RouterMode { get; set; }
-
-    [JsonPropertyName("tier")]
-    public string? Tier { get; set; }
+    [JsonPropertyName("active")]
+    public string? Active { get; set; }
 }
 
 public class WorkersDiag
