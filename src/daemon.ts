@@ -15,6 +15,7 @@ import { spawn } from "child_process";
 import { statSync } from "fs";
 import { checkForUpdate } from "./update.js";
 import { getEffectiveIdentity, LOG_PREFIX, PRIMARY_RUNTIME_ENV } from "./identity.js";
+import { acquireWakeLock, releaseWakeLock } from "./wakelock.js";
 
 function truncate(text: string, max = 200): string {
   const oneLine = text.replace(/\n/g, " ").trim();
@@ -42,6 +43,11 @@ async function main(): Promise<void> {
 
   if (config.selfEditEnabled) {
     console.log(`${LOG_PREFIX} ⚠ Self-edit mode enabled — ${identity.productName} can modify its own source code`);
+  }
+
+  // Prevent system sleep if configured
+  if (config.preventSleep) {
+    acquireWakeLock();
   }
 
   // Set up message logging to daemon console
@@ -150,6 +156,7 @@ async function shutdown(): Promise<void> {
   workers.clear();
 
   try { await stopClient(); } catch { /* best effort */ }
+  releaseWakeLock();
   closeDb();
   console.log(`${LOG_PREFIX} Goodbye.`);
   process.exit(0);
@@ -178,6 +185,7 @@ export async function restartDaemon(): Promise<void> {
   activeWorkers.clear();
 
   try { await stopClient(); } catch { /* best effort */ }
+  releaseWakeLock();
   closeDb();
 
   // Spawn a detached replacement process with the same args (include execArgv for tsx/loaders)

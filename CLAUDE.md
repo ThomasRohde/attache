@@ -81,6 +81,7 @@ Loaded from `~/.attache/.env` and cwd `.env`, validated with Zod (`src/config.ts
 | `WORKER_TIMEOUT` | Worker timeout (ms) | 600000 |
 | `ASSISTANT_DISPLAY_NAME` | Cosmetic name | Attache |
 | `ATTACHE_SELF_EDIT` | Allow self-modification | disabled |
+| `ATTACHE_PREVENT_SLEEP` | Keep PC awake while daemon runs | disabled |
 | `ATTACHE_WORKFOLDER` | Default working directory | — |
 
 ### Entry points

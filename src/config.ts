@@ -42,6 +42,7 @@ const configSchema = z.object({
   WORKER_TIMEOUT: z.string().optional(),
   ASSISTANT_DISPLAY_NAME: z.string().min(1).optional(),
   SELF_EDIT_ENABLED: z.string().optional(),
+  PREVENT_SLEEP: z.string().optional(),
   ATTACHE_WORKFOLDER: z.string().min(1).optional(),
 });
 
@@ -53,6 +54,7 @@ const raw = configSchema.parse({
   WORKER_TIMEOUT: getEnvValue("WORKER_TIMEOUT"),
   ASSISTANT_DISPLAY_NAME: getEnvValue("ASSISTANT_DISPLAY_NAME"),
   SELF_EDIT_ENABLED: getEnvValue("ATTACHE_SELF_EDIT"),
+  PREVENT_SLEEP: getEnvValue("ATTACHE_PREVENT_SLEEP"),
   ATTACHE_WORKFOLDER: getEnvValue("ATTACHE_WORKFOLDER"),
 });
 
@@ -101,6 +103,9 @@ export const config = {
   },
   get selfEditEnabled(): boolean {
     return raw.SELF_EDIT_ENABLED === "1";
+  },
+  get preventSleep(): boolean {
+    return raw.PREVENT_SLEEP === "1";
   },
   get workfolder(): string | undefined {
     return raw.ATTACHE_WORKFOLDER || undefined;
