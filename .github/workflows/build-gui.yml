@@ -10,6 +10,9 @@ on:
       - 'gui/**'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -49,3 +52,5 @@ jobs:
           git add gui/dist-win/AttacheGui.exe
           git diff --staged --quiet || git commit -m "chore: update AttacheGui.exe [skip ci]"
           git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
