@@ -10,6 +10,26 @@ import { SESSIONS_DIR } from "../paths.js";
 import { getCurrentSourceChannel } from "./orchestrator.js";
 import { getRouterConfig, updateRouterConfig } from "./router.js";
 
+export const TOOL_REGISTRY: { name: string; description: string; category: string }[] = [
+  { name: "create_worker_session", description: "Create a new Copilot CLI worker session in a specific directory", category: "workers" },
+  { name: "send_to_worker", description: "Send a prompt to an existing worker session and wait for its response", category: "workers" },
+  { name: "list_sessions", description: "List all active worker sessions with their name, status, and working directory", category: "workers" },
+  { name: "check_session_status", description: "Get detailed status of a specific worker session", category: "workers" },
+  { name: "kill_session", description: "Terminate a worker session and free its resources", category: "workers" },
+  { name: "list_machine_sessions", description: "List all Copilot CLI sessions on this machine", category: "sessions" },
+  { name: "attach_machine_session", description: "Attach to an existing Copilot CLI session on this machine", category: "sessions" },
+  { name: "list_skills", description: "List all available skills", category: "skills" },
+  { name: "learn_skill", description: "Teach Attache a new skill by creating a SKILL.md instruction file", category: "skills" },
+  { name: "uninstall_skill", description: "Remove a skill from the local skills directory", category: "skills" },
+  { name: "list_models", description: "List all available Copilot models", category: "models" },
+  { name: "switch_model", description: "Switch the Copilot model for conversations", category: "models" },
+  { name: "toggle_auto", description: "Enable or disable automatic model routing", category: "models" },
+  { name: "remember", description: "Save something to long-term memory", category: "memory" },
+  { name: "recall", description: "Search long-term memory for stored information", category: "memory" },
+  { name: "forget", description: "Remove a specific memory from long-term storage", category: "memory" },
+  { name: "restart_attache", description: "Restart the Attache daemon process", category: "system" },
+];
+
 function isTimeoutError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
   return /timeout|timed?\s*out/i.test(msg);

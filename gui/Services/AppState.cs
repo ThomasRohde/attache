@@ -18,6 +18,7 @@ public class AppState
     public List<TranscriptEntry> TranscriptEntries { get; set; } = [];
     public string? StreamingContent { get; set; }
     public WorkfolderInfo? Workfolder { get; set; }
+    public CapabilitiesModel? Capabilities { get; set; }
     public bool IsProcessing { get; set; }
     public string? WorkerLogs { get; set; }
 

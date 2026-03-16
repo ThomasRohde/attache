@@ -19,6 +19,8 @@ function getLocalVersion(): string {
   }
 }
 
+export const DAEMON_VERSION = getLocalVersion();
+
 /** Run a command asynchronously and return stdout. */
 function execAsync(cmd: string, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {

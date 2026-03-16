@@ -443,10 +443,10 @@ html, body {
     padding: 8px 12px;
     font-family: inherit;
     font-size: 14px;
-    resize: none;
+    resize: vertical;
     outline: none;
-    min-height: 36px;
-    max-height: 120px;
+    min-height: 52px;
+    max-height: 300px;
 }
 
 .composer textarea:focus {
@@ -489,6 +489,14 @@ html, body {
     font-weight: 600;
     cursor: pointer;
 }
+
+/* ── Slash Menu ──────────────────────────────────────────── */
+.slash-menu { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: 6px; max-height: 200px; overflow-y: auto; margin-bottom: 4px; }
+.slash-item { display: flex; gap: 10px; padding: 6px 12px; cursor: pointer; font-size: 13px; align-items: baseline; }
+.slash-item:hover, .slash-item.selected { background: var(--bg-input); }
+.slash-command { font-weight: 600; color: var(--accent); font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px; white-space: nowrap; }
+.slash-desc { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slash-type { font-size: 10px; color: var(--text-muted); margin-left: auto; white-space: nowrap; }
 
 /* ── Config Dialog ────────────────────────────────────────── */
 .dialog-overlay {

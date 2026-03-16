@@ -104,6 +104,17 @@ public class ApiClient : IDisposable
         catch { return null; }
     }
 
+    public async Task<CapabilitiesModel?> GetCapabilitiesAsync()
+    {
+        TryLoadToken();
+        try
+        {
+            var json = await _http.GetStringAsync("/capabilities");
+            return JsonSerializer.Deserialize<CapabilitiesModel>(json, JsonOpts);
+        }
+        catch { return null; }
+    }
+
     public async Task<List<ModelInfo>> GetModelsAsync()
     {
         TryLoadToken();

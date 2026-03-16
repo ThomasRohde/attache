@@ -70,6 +70,7 @@
         // Initial fetch
         await PollAsync();
         await FetchWorkfolderAsync();
+        await FetchCapabilitiesAsync();
     }
 
     private async Task LoadTranscriptHistoryAsync()
@@ -119,14 +120,26 @@
         catch { }
     }
 
+    private async Task FetchCapabilitiesAsync()
+    {
+        try
+        {
+            var caps = await Api.GetCapabilitiesAsync();
+            State.Capabilities = caps;
+            State.NotifyStateChanged();
+        }
+        catch { }
+    }
+
     private void OnSseConnected()
     {
         State.ConnectionState = ConnectionState.Connected;
         State.StatusMessage = "Connected";
-        // Re-fetch workfolder on (re)connect — daemon may have restarted with new cwd
+        // Re-fetch on (re)connect — daemon may have restarted with new cwd/config
         _ = InvokeAsync(async () =>
         {
             await FetchWorkfolderAsync();
+            await FetchCapabilitiesAsync();
             StateHasChanged();
         });
     }

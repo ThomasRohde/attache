@@ -83,6 +83,13 @@ public partial class MainForm : Form
         _statusTimer.Tick += async (_, _) => await RefreshStatusAsync();
         _statusTimer.Start();
 
+        // Give the BlazorWebView focus once the form is shown so the
+        // composer textarea can receive keyboard input immediately.
+        Shown += (_, _) =>
+        {
+            _blazorWebView.Focus();
+        };
+
         // Auto-start daemon
         _daemon.Start();
         SetDaemonState(DaemonState.Starting);
@@ -320,6 +327,7 @@ public partial class MainForm : Form
     private void ExitApp(object? sender, EventArgs e)
     {
         _statusTimer.Stop();
+        _daemon.Stop();
         _trayIcon.Visible = false;
         _trayIcon.Dispose();
         FormClosing -= null!; // allow actual close

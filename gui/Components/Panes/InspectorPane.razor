@@ -59,6 +59,37 @@
                 </div>
             </div>
 
+            @if (State.Capabilities is not null)
+            {
+                <div class="inspector-section">
+                    <h3>Capabilities</h3>
+                    <div class="inspector-row">
+                        <span class="label">Version</span>
+                        <span class="value">@State.Capabilities.Version</span>
+                    </div>
+                    <div class="inspector-row">
+                        <span class="label">Skills</span>
+                        <span class="value">@(State.Capabilities.SlashCommands.Count(c => c.Type == "skill"))</span>
+                    </div>
+                    <div class="inspector-row">
+                        <span class="label">Tools</span>
+                        <span class="value">@State.Capabilities.Tools.Count</span>
+                    </div>
+                    <div class="inspector-row">
+                        <span class="label">Telegram</span>
+                        <span class="value" style="color: @(State.Capabilities.Features?.Telegram == true ? "var(--green)" : "var(--text-muted)");">
+                            @(State.Capabilities.Features?.Telegram == true ? "enabled" : "disabled")
+                        </span>
+                    </div>
+                    <div class="inspector-row">
+                        <span class="label">Self-edit</span>
+                        <span class="value" style="color: @(State.Capabilities.Features?.SelfEdit == true ? "var(--green)" : "var(--text-muted)");">
+                            @(State.Capabilities.Features?.SelfEdit == true ? "enabled" : "disabled")
+                        </span>
+                    </div>
+                </div>
+            }
+
             <div class="inspector-section">
                 <h3>Process</h3>
                 <div class="inspector-row">

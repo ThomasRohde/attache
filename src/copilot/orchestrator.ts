@@ -1,5 +1,5 @@
 import { approveAll, type CopilotClient, type CopilotSession } from "@github/copilot-sdk";
-import { createTools, type WorkerInfo } from "./tools.js";
+import { createTools, TOOL_REGISTRY, type WorkerInfo } from "./tools.js";
 import { getOrchestratorSystemMessage } from "./system-message.js";
 import { config, DEFAULT_MODEL } from "../config.js";
 import { loadMcpConfig } from "./mcp-config.js";
@@ -278,8 +278,28 @@ async function executeOnSession(prompt: string, callback: MessageCallback): Prom
 
   let accumulated = "";
   let toolCallExecuted = false;
-  const unsubToolDone = session.on("tool.execution_complete", () => {
+  const internalToolNames = new Set(TOOL_REGISTRY.map((t) => t.name));
+  // Track external tool calls so we can inject their results into the stream
+  const pendingToolCalls = new Map<string, string>(); // toolCallId → toolName
+
+  const unsubToolStart = session.on("tool.execution_start", (event) => {
+    const { toolCallId, toolName } = event.data;
+    if (!internalToolNames.has(toolName)) {
+      pendingToolCalls.set(toolCallId, toolName);
+    }
+  });
+  const unsubToolDone = session.on("tool.execution_complete", (event) => {
     toolCallExecuted = true;
+    const toolName = pendingToolCalls.get(event.data.toolCallId);
+    if (toolName && event.data.result?.content) {
+      pendingToolCalls.delete(event.data.toolCallId);
+      // Inject external tool output into the stream so the user sees it
+      if (accumulated.length > 0 && !accumulated.endsWith("\n")) {
+        accumulated += "\n";
+      }
+      accumulated += `\n**[${toolName}]**\n${event.data.result.content}\n`;
+      callback(accumulated, false);
+    }
   });
   const unsubDelta = session.on("assistant.message_delta", (event) => {
     // After a tool call completes, ensure a line break separates the text blocks
@@ -308,6 +328,7 @@ async function executeOnSession(prompt: string, callback: MessageCallback): Prom
     throw err;
   } finally {
     unsubDelta();
+    unsubToolStart();
     unsubToolDone();
     currentCallback = undefined;
   }

@@ -12,6 +12,8 @@ import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { API_TOKEN_PATH, ensureAttacheHome } from "../paths.js";
+import { TOOL_REGISTRY } from "../copilot/tools.js";
+import { DAEMON_VERSION } from "../update.js";
 import {
   API_EVENT_SCHEMA_VERSION,
   createCancelledEvent,
@@ -256,6 +258,83 @@ app.get("/stream", (req: Request, res: Response) => {
   });
 });
 
+// Built-in slash command interception
+async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean; result?: string }> {
+  const trimmed = prompt.trim();
+  if (!trimmed.startsWith("/")) return { handled: false };
+
+  const parts = trimmed.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+  const args = parts.slice(1).join(" ").trim();
+
+  switch (cmd) {
+    case "/model": {
+      if (!args) {
+        return { handled: true, result: `Current model: ${config.copilotModel}` };
+      }
+      // Validate and switch model
+      try {
+        const { getClient } = await import("../copilot/client.js");
+        const client = await getClient();
+        const models = await client.listModels();
+        const match = models.find((m) => m.id === args);
+        if (!match) {
+          const suggestions = models
+            .filter((m) => m.id.includes(args) || m.id.toLowerCase().includes(args.toLowerCase()))
+            .map((m) => m.id);
+          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+          return { handled: true, result: `Model '${args}' not found.${hint}` };
+        }
+      } catch {
+        // Can't validate — allow the switch
+      }
+      const previous = config.copilotModel;
+      config.copilotModel = args;
+      persistModel(args);
+      return { handled: true, result: `Switched model from ${previous} to ${args}` };
+    }
+
+    case "/auto": {
+      if (!args) {
+        const rc = getRouterConfig();
+        return { handled: true, result: `Auto-routing: ${rc.enabled ? "enabled" : "disabled"}` };
+      }
+      if (args === "on") {
+        updateRouterConfig({ enabled: true });
+        return { handled: true, result: "Auto-routing enabled" };
+      }
+      if (args === "off") {
+        updateRouterConfig({ enabled: false });
+        return { handled: true, result: "Auto-routing disabled" };
+      }
+      return { handled: true, result: `Usage: /auto on|off` };
+    }
+
+    case "/workers": {
+      const workers = Array.from(getWorkers().values());
+      if (workers.length === 0) {
+        return { handled: true, result: "No active workers" };
+      }
+      const lines = workers.map(
+        (w) => `- ${w.name} (${w.workingDir}) — ${w.status}`
+      );
+      return { handled: true, result: `Active workers (${workers.length}):\n${lines.join("\n")}` };
+    }
+
+    case "/restart": {
+      setTimeout(() => {
+        restartDaemon().catch((err) => {
+          console.error(`${LOG_PREFIX} Restart failed:`, err);
+        });
+      }, 1000);
+      return { handled: true, result: "Restarting..." };
+    }
+
+    default:
+      return { handled: false };
+  }
+}
+
 // Send a message to the orchestrator
 app.post("/message", (req: Request, res: Response) => {
   const { prompt, connectionId } = req.body as { prompt?: string; connectionId?: string };
@@ -270,6 +349,34 @@ app.post("/message", (req: Request, res: Response) => {
     return;
   }
 
+  // Intercept built-in slash commands
+  const trimmedPrompt = prompt.trim();
+  if (trimmedPrompt.startsWith("/")) {
+    handleBuiltInCommand(trimmedPrompt).then((builtIn) => {
+      if (builtIn.handled) {
+        const sseRes = sseClients.get(connectionId);
+        if (sseRes) {
+          sseRes.write(encodeSseEvent(createCompleteEvent(builtIn.result!)));
+        }
+        logConversation("user", trimmedPrompt, "tui");
+        logConversation("assistant", builtIn.result!, "tui");
+        broadcastTranscriptEntry("user", trimmedPrompt, "tui");
+        broadcastTranscriptEntry("assistant", builtIn.result!, "tui");
+        res.json({ status: "executed", builtIn: true });
+        return;
+      }
+      // Not a built-in command — pass through to orchestrator
+      dispatchToOrchestrator(prompt, connectionId, res);
+    }).catch(() => {
+      dispatchToOrchestrator(prompt, connectionId, res);
+    });
+    return;
+  }
+
+  dispatchToOrchestrator(prompt, connectionId, res);
+});
+
+function dispatchToOrchestrator(prompt: string, connectionId: string, res: Response) {
   sendToOrchestrator(
     prompt,
     { type: "tui", connectionId },
@@ -299,7 +406,7 @@ app.post("/message", (req: Request, res: Response) => {
   );
 
   res.json({ status: "queued" });
-});
+}
 
 // Cancel the current in-flight message
 app.post("/cancel", async (_req: Request, res: Response) => {
@@ -409,6 +516,61 @@ app.delete("/skills/:slug", (req: Request, res: Response) => {
   } else {
     res.json({ ok: true, message: result.message });
   }
+});
+
+// Capabilities manifest (fetched once on connect)
+app.get("/capabilities", (_req: Request, res: Response) => {
+  const identity = getEffectiveIdentity();
+  const skills = listSkills();
+  const routerConfig = getRouterConfig();
+
+  const slashCommands: {
+    command: string;
+    name: string;
+    description: string;
+    type: "builtIn" | "skill";
+    usage?: string;
+    source?: string;
+  }[] = [
+    { command: "/model", name: "Switch model", description: "Show or switch the active model", type: "builtIn", usage: "/model [name]" },
+    { command: "/auto", name: "Auto-routing", description: "Toggle automatic model routing", type: "builtIn", usage: "/auto on|off" },
+    { command: "/workers", name: "List workers", description: "Show active worker sessions", type: "builtIn" },
+    { command: "/restart", name: "Restart", description: "Restart the daemon", type: "builtIn" },
+  ];
+
+  // Add skill-based slash commands
+  for (const skill of skills) {
+    slashCommands.push({
+      command: `/${skill.slug}`,
+      name: skill.name,
+      description: skill.description,
+      type: "skill",
+      source: skill.source,
+    });
+  }
+
+  res.json({
+    version: DAEMON_VERSION,
+    schemaVersion: API_EVENT_SCHEMA_VERSION,
+    identity: {
+      productName: identity.productName,
+      assistantDisplayName: identity.assistantDisplayName,
+    },
+    slashCommands,
+    tools: TOOL_REGISTRY,
+    model: {
+      current: config.copilotModel,
+      autoRouting: {
+        enabled: routerConfig.enabled,
+        tierModels: routerConfig.tierModels,
+      },
+    },
+    features: {
+      telegram: config.telegramEnabled,
+      selfEdit: config.selfEditEnabled,
+      autoRouting: routerConfig.enabled,
+    },
+  });
 });
 
 // Get workfolder info

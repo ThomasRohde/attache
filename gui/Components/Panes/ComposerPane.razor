@@ -11,30 +11,50 @@
             <span>@State.StatusMessage</span>
         </div>
     </div>
-    <div class="composer-row">
-        <textarea @bind="_input"
-                  @bind:event="oninput"
-                  @onkeydown="HandleKeyDown"
-                  @ref="_textareaRef"
-                  placeholder="Type a message..."
-                  disabled="@(!Sse.IsConnected)"
-                  rows="1"></textarea>
-        @if (State.IsProcessing)
+    <div class="composer-row" style="position: relative; flex-direction: column; align-items: stretch;">
+        @if (_showSlashMenu && _filteredCommands.Count > 0)
         {
-            <button class="cancel-btn" @onclick="CancelAsync">Cancel</button>
+            <div class="slash-menu">
+                @for (var i = 0; i < _filteredCommands.Count; i++)
+                {
+                    var idx = i;
+                    var cmd = _filteredCommands[idx];
+                    <div class="slash-item @(idx == _selectedSlashIndex ? "selected" : "")"
+                         @onclick="() => ClickSlashCommand(idx)">
+                        <span class="slash-command">@cmd.Command</span>
+                        <span class="slash-desc">@cmd.Description</span>
+                        <span class="slash-type">@cmd.Type</span>
+                    </div>
+                }
+            </div>
         }
-        else
-        {
-            <button class="send-btn"
-                    @onclick="SendAsync"
-                    disabled="@(!CanSend)">Send</button>
-        }
+        <div style="display: flex; gap: 8px; align-items: flex-end;">
+            <textarea @oninput="OnInputChanged"
+                      @ref="_textareaRef"
+                      placeholder="Type a message... (/ for commands)"
+                      disabled="@(!Sse.IsConnected)"
+                      rows="2"></textarea>
+            @if (State.IsProcessing)
+            {
+                <button class="cancel-btn" @onclick="CancelAsync">Cancel</button>
+            }
+            else
+            {
+                <button class="send-btn"
+                        @onclick="SendFromButtonAsync"
+                        disabled="@(!CanSend)">Send</button>
+            }
+        </div>
     </div>
 </div>
 
 @code {
     private string _input = "";
     private ElementReference _textareaRef;
+    private bool _showSlashMenu;
+    private int _selectedSlashIndex;
+    private List<SlashCommand> _filteredCommands = [];
+    private DotNetObjectReference<ComposerPane>? _dotnetRef;
 
     private string ConnectionStatus => State.ConnectionState switch
     {
@@ -55,20 +75,125 @@
         InvokeAsync(StateHasChanged);
     }
 
-    private async Task HandleKeyDown(KeyboardEventArgs e)
+    private void OnInputChanged(ChangeEventArgs e)
     {
-        if (e.Key == "Enter" && !e.ShiftKey)
+        _input = e.Value?.ToString() ?? "";
+        UpdateSlashPredictions();
+    }
+
+    private void UpdateSlashPredictions()
+    {
+        var wasOpen = _showSlashMenu;
+
+        if (_input.StartsWith("/") && State.Capabilities?.SlashCommands is { Count: > 0 } commands)
         {
-            await SendAsync();
+            var prefix = _input.ToLowerInvariant();
+            _filteredCommands = commands
+                .Where(c => c.Command.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .Take(8)
+                .ToList();
+            _showSlashMenu = _filteredCommands.Count > 0;
+            _selectedSlashIndex = 0;
+        }
+        else
+        {
+            _showSlashMenu = false;
+            _filteredCommands = [];
+        }
+
+        if (wasOpen != _showSlashMenu)
+        {
+            _ = JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, _showSlashMenu);
         }
     }
 
-    private async Task SendAsync()
+    /// <summary>True when a command needs no arguments and can be sent immediately.</summary>
+    private static bool IsFireAndForget(SlashCommand cmd)
+        => cmd.Type == "builtIn" && cmd.Usage is null;
+
+    /// <summary>Called from JS when a key is pressed while the slash menu is open.</summary>
+    [JSInvokable("HandleSlashKey")]
+    public async Task HandleSlashKeyAsync(string key)
+    {
+        switch (key)
+        {
+            case "ArrowDown":
+                _selectedSlashIndex = (_selectedSlashIndex + 1) % _filteredCommands.Count;
+                StateHasChanged();
+                break;
+            case "ArrowUp":
+                _selectedSlashIndex = (_selectedSlashIndex - 1 + _filteredCommands.Count) % _filteredCommands.Count;
+                StateHasChanged();
+                break;
+            case "Tab":
+                await FillSlashCommand(_selectedSlashIndex);
+                break;
+            case "Enter":
+                await ActivateSlashCommand(_selectedSlashIndex);
+                break;
+            case "Escape":
+                _showSlashMenu = false;
+                await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+                StateHasChanged();
+                break;
+        }
+    }
+
+    /// <summary>Click on a slash command: fire-and-forget commands send, others fill.</summary>
+    private async Task ClickSlashCommand(int index)
+    {
+        await ActivateSlashCommand(index);
+    }
+
+    /// <summary>Enter or click: send immediately if no args needed, otherwise fill for editing.</summary>
+    private async Task ActivateSlashCommand(int index)
+    {
+        if (index < 0 || index >= _filteredCommands.Count) return;
+        var cmd = _filteredCommands[index];
+        if (IsFireAndForget(cmd))
+        {
+            _showSlashMenu = false;
+            _filteredCommands = [];
+            await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+            await DoSend(cmd.Command);
+        }
+        else
+        {
+            await FillSlashCommand(index);
+        }
+    }
+
+    /// <summary>Fill the input with the command + trailing space so the user can type args.</summary>
+    private async Task FillSlashCommand(int index)
+    {
+        if (index < 0 || index >= _filteredCommands.Count) return;
+        var cmd = _filteredCommands[index];
+        _input = cmd.Command + " ";
+        _showSlashMenu = false;
+        _filteredCommands = [];
+        await JS.InvokeVoidAsync("attache.setSlashMenuOpen", _textareaRef, false);
+        await JS.InvokeVoidAsync("attache.setComposerValue", _textareaRef, _input);
+        StateHasChanged();
+    }
+
+    [JSInvokable("JsSend")]
+    public async Task JsSendAsync(string text)
+    {
+        await DoSend(text);
+    }
+
+    private async Task SendFromButtonAsync()
     {
         var text = _input.Trim();
-        if (string.IsNullOrEmpty(text) || !Sse.IsConnected || State.IsProcessing) return;
+        if (string.IsNullOrEmpty(text)) return;
+        await DoSend(text);
+    }
 
+    private async Task DoSend(string text)
+    {
         _input = "";
+        _showSlashMenu = false;
+        await JS.InvokeVoidAsync("attache.clearComposer", _textareaRef);
         State.AddUserMessage(text);
 
         var connectionId = Sse.ConnectionId;
@@ -87,7 +212,11 @@
     {
         if (firstRender)
         {
-            try { await _textareaRef.FocusAsync(); }
+            _dotnetRef = DotNetObjectReference.Create(this);
+            try
+            {
+                await JS.InvokeVoidAsync("attache.initComposer", _textareaRef, _dotnetRef);
+            }
             catch { }
         }
     }
@@ -95,5 +224,7 @@
     public void Dispose()
     {
         State.OnStateChanged -= HandleStateChanged;
+        try { JS.InvokeVoidAsync("attache.disposeComposer", _textareaRef); } catch { }
+        _dotnetRef?.Dispose();
     }
 }

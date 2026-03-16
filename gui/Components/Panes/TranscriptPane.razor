@@ -18,7 +18,7 @@
         @if (State.ViewingOrchestrator)
         {
             @* ── Orchestrator transcript ── *@
-            @if (State.TranscriptEntries.Count == 0 && State.StreamingContent is null)
+            @if (TranscriptSnapshot.Count == 0 && State.StreamingContent is null)
             {
                 <div class="empty-state">
                     Send a message to start a conversation.
@@ -26,7 +26,7 @@
             }
             else
             {
-                @foreach (var entry in State.TranscriptEntries)
+                @foreach (var entry in TranscriptSnapshot)
                 {
                     <div class="transcript-entry">
                         <div class="entry-header">
@@ -85,6 +85,9 @@
 </div>
 
 @code {
+    // Snapshot to avoid "collection was modified" during render
+    private List<TranscriptEntry> TranscriptSnapshot => State.TranscriptEntries.ToList();
+
     private int _lastEntryCount;
     private string? _lastStreamingContent;
     private string? _lastWorkerId;
