@@ -110,7 +110,7 @@ export class ClaudeBackendClient implements BackendClient {
       this.cachedModels = models.map((m) => ({
         id: m.value,
         name: m.displayName || m.value,
-        multiplier: 0,
+        multiplier: -1,
         enabled: true,
       }));
       console.log(`${LOG_PREFIX} Cached ${this.cachedModels.length} models from Claude SDK`);

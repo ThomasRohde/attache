@@ -13,7 +13,9 @@ public class ModelInfo
     [JsonPropertyName("multiplier")]
     public double Multiplier { get; set; }
 
-    public string DisplayLabel => Multiplier == 0
-        ? $"{Name} (included)"
-        : $"{Name} ({Multiplier}x)";
+    public string DisplayLabel => Multiplier > 0
+        ? $"{Name} ({Multiplier}x)"
+        : Multiplier == 0
+            ? $"{Name} (included)"
+            : Name;
 }
