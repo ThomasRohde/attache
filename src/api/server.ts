@@ -13,7 +13,7 @@ import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { API_TOKEN_PATH, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
 import { join, sep, resolve } from "path";
 import { homedir } from "os";
-import { TOOL_REGISTRY, type WorkerInfo } from "../copilot/tools.js";
+import { TOOL_REGISTRY, BLOCKED_WORKER_DIRS, MAX_CONCURRENT_WORKERS, type WorkerInfo } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
 import { getBackendClient, getBackendName, getStaticModels } from "../backend/registry.js";
 import {
@@ -186,12 +186,6 @@ app.post("/workers/:id/cancel", async (req: Request, res: Response) => {
 });
 
 // Create a worker session (for Claude backend — agent calls via curl)
-const BLOCKED_WORKER_DIRS = [
-  ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
-  ".kube", ".docker", ".npmrc", ".pypirc",
-];
-const MAX_CONCURRENT_WORKERS = 5;
-
 app.post("/workers", async (req: Request, res: Response) => {
   const { name, working_dir, initial_prompt } = req.body as {
     name?: string;
@@ -627,6 +621,9 @@ app.post("/model", async (req: Request, res: Response) => {
   const previous = config.copilotModel;
   config.copilotModel = model;
   persistModel(model);
+  // Reset orchestrator session so next message uses the new model
+  const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
+  resetForModelSwitch();
   res.json({ previous, current: model });
 });
 

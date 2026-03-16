@@ -46,12 +46,12 @@ function formatWorkerError(workerName: string, startedAt: number, timeoutMs: num
   return `Worker '${workerName}' failed after ${elapsed}s: ${msg}`;
 }
 
-const BLOCKED_WORKER_DIRS = [
+export const BLOCKED_WORKER_DIRS = [
   ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
   ".kube", ".docker", ".npmrc", ".pypirc",
 ];
 
-const MAX_CONCURRENT_WORKERS = 5;
+export const MAX_CONCURRENT_WORKERS = 5;
 
 export interface WorkerInfo {
   name: string;

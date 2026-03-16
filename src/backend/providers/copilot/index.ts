@@ -103,7 +103,7 @@ export class CopilotBackendClient implements BackendClient {
     };
 
     if (config.systemMessage !== undefined) {
-      sdkConfig.systemMessage = { content: config.systemMessage };
+      sdkConfig.systemMessage = { mode: "replace", content: config.systemMessage };
     }
     if (config.streaming !== undefined) {
       sdkConfig.streaming = config.streaming;
