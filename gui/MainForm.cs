@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using System.Windows.Forms;
 using Microsoft.AspNetCore.Components.WebView.WindowsForms;
 using Microsoft.Extensions.DependencyInjection;
@@ -26,16 +27,26 @@ public partial class MainForm : Form
     [DllImport("dwmapi.dll", PreserveSig = true)]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
 
+    private static readonly string WindowBoundsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".attache", "window.json");
+
+    private Rectangle _normalBounds;
+    private bool _maximized;
+
     public MainForm()
     {
         Text = "Attache";
-        var workArea = Screen.PrimaryScreen!.WorkingArea;
-        Width = Math.Max(1280, (int)(workArea.Width * 0.8));
-        Height = Math.Max(800, (int)(workArea.Height * 0.8));
         MinimumSize = new Size(900, 600);
-        StartPosition = FormStartPosition.CenterScreen;
         BackColor = IsSystemDarkMode() ? Color.FromArgb(30, 30, 30) : Color.White;
-        Icon = Icons.CreateAppIcon();
+
+        if (!RestoreWindowBounds())
+        {
+            var workArea = Screen.PrimaryScreen!.WorkingArea;
+            Width = Math.Max(1280, (int)(workArea.Width * 0.8));
+            Height = Math.Max(800, (int)(workArea.Height * 0.8));
+            StartPosition = FormStartPosition.CenterScreen;
+        }
+        Icon = Icons.AppIcon;
 
         // Match title bar to system theme (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
         var useDark = IsSystemDarkMode() ? 1 : 0;
@@ -218,6 +229,92 @@ public partial class MainForm : Form
         }
     }
 
+    // ── Window bounds persistence ─────────────────────────────────
+
+    private bool RestoreWindowBounds()
+    {
+        try
+        {
+            if (!File.Exists(WindowBoundsPath)) return false;
+            var json = File.ReadAllText(WindowBoundsPath);
+            var data = JsonSerializer.Deserialize<JsonElement>(json);
+
+            var rect = new Rectangle(
+                data.GetProperty("x").GetInt32(),
+                data.GetProperty("y").GetInt32(),
+                data.GetProperty("w").GetInt32(),
+                data.GetProperty("h").GetInt32());
+
+            // Ensure saved position is visible on a current screen
+            bool onScreen = Screen.AllScreens.Any(s => s.WorkingArea.IntersectsWith(rect));
+            if (!onScreen || rect.Width < MinimumSize.Width || rect.Height < MinimumSize.Height)
+                return false;
+
+            StartPosition = FormStartPosition.Manual;
+            Bounds = rect;
+            _normalBounds = rect;
+
+            if (data.TryGetProperty("max", out var maxProp) && maxProp.GetBoolean())
+            {
+                _maximized = true;
+                WindowState = FormWindowState.Maximized;
+            }
+            return true;
+        }
+        catch { return false; }
+    }
+
+    private void SaveWindowBounds()
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(new
+            {
+                x = _normalBounds.X,
+                y = _normalBounds.Y,
+                w = _normalBounds.Width,
+                h = _normalBounds.Height,
+                max = _maximized,
+            });
+            Directory.CreateDirectory(Path.GetDirectoryName(WindowBoundsPath)!);
+            File.WriteAllText(WindowBoundsPath, json);
+        }
+        catch { /* best effort */ }
+    }
+
+    protected override void OnResizeEnd(EventArgs e)
+    {
+        base.OnResizeEnd(e);
+        if (WindowState == FormWindowState.Normal)
+        {
+            _normalBounds = Bounds;
+            _maximized = false;
+            SaveWindowBounds();
+        }
+    }
+
+    protected override void OnMove(EventArgs e)
+    {
+        base.OnMove(e);
+        if (WindowState == FormWindowState.Normal)
+            _normalBounds = Bounds;
+    }
+
+    protected override void OnSizeChanged(EventArgs e)
+    {
+        base.OnSizeChanged(e);
+        if (WindowState == FormWindowState.Maximized)
+        {
+            _maximized = true;
+            SaveWindowBounds();
+        }
+        else if (WindowState == FormWindowState.Normal)
+        {
+            _normalBounds = Bounds;
+            _maximized = false;
+        }
+    }
+
     // ── Cleanup ──────────────────────────────────────────────────
 
     private void ExitApp(object? sender, EventArgs e)
@@ -231,6 +328,7 @@ public partial class MainForm : Form
 
     protected override void OnFormClosing(FormClosingEventArgs e)
     {
+        SaveWindowBounds();
         if (e.CloseReason == CloseReason.UserClosing)
         {
             e.Cancel = true;
@@ -256,10 +354,12 @@ internal enum DaemonState { Stopped, Starting, Running }
 
 internal static class Icons
 {
+    private static Icon? _app;
     private static Icon? _green;
     private static Icon? _grey;
     private static Icon? _yellow;
 
+    public static Icon AppIcon => _app ??= LoadAppIcon();
     public static Icon Green => _green ??= CreateCircleIcon(Color.FromArgb(34, 197, 94));
     public static Icon Grey => _grey ??= CreateCircleIcon(Color.FromArgb(156, 163, 175));
     public static Icon Yellow => _yellow ??= CreateCircleIcon(Color.FromArgb(234, 179, 8));
@@ -267,21 +367,15 @@ internal static class Icons
     [System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
     private static extern bool DestroyIcon(IntPtr hIcon);
 
-    private static Icon CreateCircleIcon(Color color)
+    private static Icon LoadAppIcon()
     {
-        using var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using var g = Graphics.FromImage(bmp);
-        g.Clear(Color.Transparent);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        using var brush = new SolidBrush(color);
-        g.FillEllipse(brush, 2, 2, 12, 12);
-        var hIcon = bmp.GetHicon();
-        var icon = (Icon)Icon.FromHandle(hIcon).Clone();
-        DestroyIcon(hIcon);
-        return icon;
+        var stream = typeof(Icons).Assembly.GetManifestResourceStream("AttacheGui.icon.ico");
+        if (stream is not null)
+            return new Icon(stream, 256, 256);
+        return CreateFallbackIcon();
     }
 
-    public static Icon CreateAppIcon()
+    private static Icon CreateFallbackIcon()
     {
         using var bmp = new Bitmap(32, 32, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
         using var g = Graphics.FromImage(bmp);
@@ -293,6 +387,20 @@ internal static class Icons
         using var textBrush = new SolidBrush(Color.White);
         var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         g.DrawString("A", font, textBrush, new RectangleF(0, 0, 32, 32), sf);
+        var hIcon = bmp.GetHicon();
+        var icon = (Icon)Icon.FromHandle(hIcon).Clone();
+        DestroyIcon(hIcon);
+        return icon;
+    }
+
+    private static Icon CreateCircleIcon(Color color)
+    {
+        using var bmp = new Bitmap(16, 16, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        using var g = Graphics.FromImage(bmp);
+        g.Clear(Color.Transparent);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        using var brush = new SolidBrush(color);
+        g.FillEllipse(brush, 2, 2, 12, 12);
         var hIcon = bmp.GetHicon();
         var icon = (Icon)Icon.FromHandle(hIcon).Clone();
         DestroyIcon(hIcon);

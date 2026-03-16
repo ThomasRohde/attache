@@ -22,6 +22,17 @@ static class Program
             return;
         }
 
-        Application.Run(new MainForm());
+        // Show splash screen while main form loads
+        var splash = new SplashForm();
+        splash.Show();
+        Application.DoEvents();
+
+        var main = new MainForm();
+        main.Shown += (_, _) =>
+        {
+            splash.BeginFadeOut();
+        };
+
+        Application.Run(main);
     }
 }
