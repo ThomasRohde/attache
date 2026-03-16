@@ -25,6 +25,25 @@
     --title-bar-height: 40px;
 }
 
+@media (prefers-color-scheme: light) {
+    :root {
+        --bg-primary: #ffffff;
+        --bg-secondary: #f3f3f3;
+        --bg-tertiary: #e8e8e8;
+        --bg-input: #ffffff;
+        --border: #d4d4d4;
+        --text-primary: #1e1e1e;
+        --text-secondary: #616161;
+        --text-muted: #a0a0a0;
+        --accent: #0066b8;
+        --accent-hover: #005a9e;
+        --green: #16a34a;
+        --yellow: #ca8a04;
+        --red: #dc2626;
+        --orange: #ea580c;
+    }
+}
+
 html, body {
     height: 100%;
     overflow: hidden;

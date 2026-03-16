@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using Microsoft.AspNetCore.Components.WebView.WindowsForms;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +23,9 @@ public partial class MainForm : Form
 
     private DaemonState _daemonState = DaemonState.Stopped;
 
+    [DllImport("dwmapi.dll", PreserveSig = true)]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
     public MainForm()
     {
         Text = "Attache";
@@ -30,8 +34,12 @@ public partial class MainForm : Form
         Height = Math.Max(800, (int)(workArea.Height * 0.8));
         MinimumSize = new Size(900, 600);
         StartPosition = FormStartPosition.CenterScreen;
-        BackColor = Color.FromArgb(30, 30, 30);
+        BackColor = IsSystemDarkMode() ? Color.FromArgb(30, 30, 30) : Color.White;
         Icon = Icons.CreateAppIcon();
+
+        // Match title bar to system theme (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
+        var useDark = IsSystemDarkMode() ? 1 : 0;
+        DwmSetWindowAttribute(Handle, 20, ref useDark, sizeof(int));
 
         // --- DI & Blazor ---
         var services = new ServiceCollection();
@@ -170,6 +178,14 @@ public partial class MainForm : Form
             DaemonState.Starting => Icons.Yellow,
             _ => Icons.Grey,
         };
+    }
+
+    // ── Theme ─────────────────────────────────────────────────────
+
+    private static bool IsSystemDarkMode()
+    {
+        using var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize");
+        return key?.GetValue("AppsUseLightTheme") is int v && v == 0;
     }
 
     // ── Auto-start ───────────────────────────────────────────────
