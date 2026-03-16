@@ -8,6 +8,7 @@ import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { broadcastTranscriptEntry } from "../api/server.js";
+import { getBackendClient } from "../backend/registry.js";
 
 let bot: Bot | undefined;
 
@@ -39,6 +40,7 @@ export function createBot(): Bot {
         "/cancel — Cancel the current message\n" +
         "/model — Show current model\n" +
         "/model <name> — Switch model\n" +
+        "/provider — Show or switch backend provider\n" +
         "/memory — Show stored memories\n" +
         "/skills — List installed skills\n" +
         "/workers — List active worker sessions\n" +
@@ -55,17 +57,18 @@ export function createBot(): Bot {
     if (arg) {
       // Validate against available models before persisting
       try {
-        const { getClient } = await import("../copilot/client.js");
-        const client = await getClient();
-        const models = await client.listModels();
-        const match = models.find((m) => m.id === arg);
-        if (!match) {
-          const suggestions = models
-            .filter((m) => m.id.includes(arg) || m.id.toLowerCase().includes(arg.toLowerCase()))
-            .map((m) => m.id);
-          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-          await ctx.reply(`Model '${arg}' not found.${hint}`);
-          return;
+        const client = getBackendClient();
+        if (client.capabilities.modelListing) {
+          const models = await client.listModels();
+          const match = models.find((m) => m.id === arg);
+          if (!match) {
+            const suggestions = models
+              .filter((m) => m.id.includes(arg) || m.id.toLowerCase().includes(arg.toLowerCase()))
+              .map((m) => m.id);
+            const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+            await ctx.reply(`Model '${arg}' not found.${hint}`);
+            return;
+          }
         }
       } catch {
         // If validation fails (client not ready), allow the switch — will fail on next message if wrong
@@ -103,6 +106,33 @@ export function createBot(): Bot {
     } else {
       const lines = skills.map((s) => `• ${s.name} (${s.source}) — ${s.description}`);
       await ctx.reply(lines.join("\n"));
+    }
+  });
+  bot.command("provider", async (ctx) => {
+    const arg = ctx.match?.trim();
+    if (arg) {
+      const supported = ["copilot", "claude", "codex"];
+      if (!supported.includes(arg)) {
+        await ctx.reply(`Unknown provider '${arg}'. Supported: ${supported.join(", ")}`);
+        return;
+      }
+      const { getBackendName } = await import("../backend/registry.js");
+      const previous = getBackendName();
+      if (arg === previous) {
+        await ctx.reply(`Already using provider: ${arg}`);
+        return;
+      }
+      const { persistEnvVar } = await import("../config.js");
+      persistEnvVar("ATTACHE_BACKEND", arg);
+      await ctx.reply(`Switching provider: ${previous} → ${arg}. Restarting...`);
+      setTimeout(() => {
+        restartDaemon().catch((err) => {
+          console.error(`${LOG_PREFIX} Restart failed:`, err);
+        });
+      }, 500);
+    } else {
+      const { getBackendName } = await import("../backend/registry.js");
+      await ctx.reply(`Current provider: ${getBackendName()}`);
     }
   });
   bot.command("workers", async (ctx) => {

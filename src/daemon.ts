@@ -5,7 +5,7 @@ if (process.platform === "win32" && !("type" in process)) {
   (process as any).type = "browser";
 }
 
-import { getClient, stopClient } from "./copilot/client.js";
+import { initBackendClient, stopBackendClient } from "./backend/registry.js";
 import { initOrchestrator, setMessageLogger, setProactiveNotify, getWorkers } from "./copilot/orchestrator.js";
 import { startApiServer, broadcastToSSE } from "./api/server.js";
 import { createBot, startBot, stopBot, sendProactiveMessage } from "./telegram/bot.js";
@@ -61,10 +61,11 @@ async function main(): Promise<void> {
   getDb();
   console.log(`${LOG_PREFIX} Database initialized`);
 
-  // Start Copilot SDK client
-  console.log(`${LOG_PREFIX} Starting Copilot SDK client...`);
-  const client = await getClient();
-  console.log(`${LOG_PREFIX} Copilot SDK client ready`);
+  // Start backend client (defaults to Copilot SDK via ATTACHE_BACKEND config)
+  const backendName = config.backend;
+  console.log(`${LOG_PREFIX} Starting ${backendName} backend client...`);
+  const client = await initBackendClient(backendName);
+  console.log(`${LOG_PREFIX} ${backendName} backend client ready (state: ${client.getState()})`);
 
   // Initialize orchestrator session
   console.log(`${LOG_PREFIX} Creating orchestrator session...`);
@@ -155,7 +156,7 @@ async function shutdown(): Promise<void> {
   );
   workers.clear();
 
-  try { await stopClient(); } catch { /* best effort */ }
+  try { await stopBackendClient(); } catch { /* best effort */ }
   releaseWakeLock();
   closeDb();
   console.log(`${LOG_PREFIX} Goodbye.`);
@@ -184,7 +185,7 @@ export async function restartDaemon(): Promise<void> {
   );
   activeWorkers.clear();
 
-  try { await stopClient(); } catch { /* best effort */ }
+  try { await stopBackendClient(); } catch { /* best effort */ }
   releaseWakeLock();
   closeDb();
 

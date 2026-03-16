@@ -1,5 +1,7 @@
 import { z } from "zod";
-import { approveAll, defineTool, type CopilotClient, type CopilotSession, type Tool } from "@github/copilot-sdk";
+import { defineTool } from "../backend/providers/copilot/tool-bridge.js";
+import type { Tool } from "../backend/providers/copilot/tool-bridge.js";
+import type { BackendClient, BackendSession } from "../backend/types.js";
 import { getDb, addMemory, searchMemories, removeMemory } from "../store/db.js";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, sep, resolve } from "path";
@@ -11,7 +13,7 @@ import { getCurrentSourceChannel } from "./orchestrator.js";
 import { getRouterConfig, updateRouterConfig } from "./router.js";
 
 export const TOOL_REGISTRY: { name: string; description: string; category: string }[] = [
-  { name: "create_worker_session", description: "Create a new Copilot CLI worker session in a specific directory", category: "workers" },
+  { name: "create_worker_session", description: "Create a new worker session in a specific directory", category: "workers" },
   { name: "send_to_worker", description: "Send a prompt to an existing worker session and wait for its response", category: "workers" },
   { name: "list_sessions", description: "List all active worker sessions with their name, status, and working directory", category: "workers" },
   { name: "check_session_status", description: "Get detailed status of a specific worker session", category: "workers" },
@@ -21,8 +23,8 @@ export const TOOL_REGISTRY: { name: string; description: string; category: strin
   { name: "list_skills", description: "List all available skills", category: "skills" },
   { name: "learn_skill", description: "Teach Attache a new skill by creating a SKILL.md instruction file", category: "skills" },
   { name: "uninstall_skill", description: "Remove a skill from the local skills directory", category: "skills" },
-  { name: "list_models", description: "List all available Copilot models", category: "models" },
-  { name: "switch_model", description: "Switch the Copilot model for conversations", category: "models" },
+  { name: "list_models", description: "List all available models", category: "models" },
+  { name: "switch_model", description: "Switch the model for conversations", category: "models" },
   { name: "toggle_auto", description: "Enable or disable automatic model routing", category: "models" },
   { name: "remember", description: "Save something to long-term memory", category: "memory" },
   { name: "recall", description: "Search long-term memory for stored information", category: "memory" },
@@ -55,7 +57,7 @@ const MAX_CONCURRENT_WORKERS = 5;
 
 export interface WorkerInfo {
   name: string;
-  session: CopilotSession;
+  session: BackendSession;
   workingDir: string;
   status: "idle" | "running" | "error";
   lastOutput?: string;
@@ -68,16 +70,16 @@ export interface WorkerInfo {
 }
 
 export interface ToolDeps {
-  client: CopilotClient;
+  client: BackendClient;
   workers: Map<string, WorkerInfo>;
   onWorkerComplete: (name: string, result: string) => void;
 }
 
 export function createTools(deps: ToolDeps): Tool<any>[] {
-  return [
+  const tools: Tool<any>[] = [
     defineTool("create_worker_session", {
       description:
-        "Create a new Copilot CLI worker session in a specific directory. " +
+        "Create a new worker session in a specific directory. " +
         "Use for coding tasks, debugging, file operations. " +
         "Returns confirmation with session name.",
       parameters: z.object({
@@ -109,7 +111,6 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           model: config.copilotModel,
           configDir: SESSIONS_DIR,
           workingDirectory: workingDir,
-          onPermissionRequest: approveAll,
         });
 
         const worker: WorkerInfo = {
@@ -137,13 +138,14 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
 
           const timeoutMs = config.workerTimeoutMs;
           // Non-blocking: dispatch work and return immediately
-          session.sendAndWait({
-            prompt: `Working directory: ${workingDir}\n\n${args.initial_prompt}`,
-          }, timeoutMs).then((result) => {
+          session.sendAndWait(
+            `Working directory: ${workingDir}\n\n${args.initial_prompt}`,
+            timeoutMs,
+          ).then((result) => {
             if (worker.cancelled) {
               return;
             }
-            worker.lastOutput = result?.data?.content || "No response";
+            worker.lastOutput = result.content || "No response";
             deps.onWorkerComplete(args.name, worker.lastOutput);
           }).catch((err) => {
             if (worker.cancelled) {
@@ -192,11 +194,11 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
 
         const timeoutMs = config.workerTimeoutMs;
         // Non-blocking: dispatch work and return immediately
-        worker.session.sendAndWait({ prompt: args.prompt }, timeoutMs).then((result) => {
+        worker.session.sendAndWait(args.prompt, timeoutMs).then((result) => {
           if (worker.cancelled) {
             return;
           }
-          worker.lastOutput = result?.data?.content || "No response";
+          worker.lastOutput = result.content || "No response";
           deps.onWorkerComplete(args.name, worker.lastOutput);
         }).catch((err) => {
           if (worker.cancelled) {
@@ -272,107 +274,6 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
       },
     }),
 
-    defineTool("list_machine_sessions", {
-      description:
-        "List ALL Copilot CLI sessions on this machine — including sessions started from VS Code, " +
-        "the terminal, or other tools. Shows session ID, summary, working directory. " +
-        "Use this when the user asks about existing sessions running on the machine. " +
-        "By default shows the 20 most recently active sessions.",
-      parameters: z.object({
-        cwd_filter: z.string().optional().describe("Optional: only show sessions whose working directory contains this string"),
-        limit: z.number().int().min(1).max(100).optional().describe("Maximum sessions to return (default 20)"),
-      }),
-      handler: async (args) => {
-        const sessionStateDir = join(homedir(), ".copilot", "session-state");
-        const limit = args.limit || 20;
-
-        let entries: { id: string; cwd: string; summary: string; updatedAt: Date }[] = [];
-
-        try {
-          const dirs = readdirSync(sessionStateDir);
-          for (const dir of dirs) {
-            const yamlPath = join(sessionStateDir, dir, "workspace.yaml");
-            try {
-              const content = readFileSync(yamlPath, "utf-8");
-              const parsed = parseSimpleYaml(content);
-              if (args.cwd_filter && !parsed.cwd?.includes(args.cwd_filter)) continue;
-              entries.push({
-                id: parsed.id || dir,
-                cwd: parsed.cwd || "unknown",
-                summary: parsed.summary || "",
-                updatedAt: parsed.updated_at ? new Date(parsed.updated_at) : new Date(0),
-              });
-            } catch {
-              // Skip dirs without valid workspace.yaml
-            }
-          }
-        } catch (err: unknown) {
-          if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
-            return "No Copilot sessions found on this machine (session state directory does not exist yet).";
-          }
-          return "Could not read session state directory.";
-        }
-
-        // Sort by most recently updated
-        entries.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
-        entries = entries.slice(0, limit);
-
-        if (entries.length === 0) {
-          return "No Copilot sessions found on this machine.";
-        }
-
-        const lines = entries.map((s) => {
-          const age = formatAge(s.updatedAt);
-          const summary = s.summary ? ` — ${s.summary}` : "";
-          return `• ID: ${s.id}\n  ${s.cwd} (${age})${summary}`;
-        });
-
-        return `Found ${entries.length} session(s) (most recent first):\n${lines.join("\n")}`;
-      },
-    }),
-
-    defineTool("attach_machine_session", {
-      description:
-        "Attach to an existing Copilot CLI session on this machine (e.g. one started from VS Code or terminal). " +
-        "Resumes the session and adds it as a managed worker so you can send prompts to it.",
-      parameters: z.object({
-        session_id: z.string().describe("The session ID to attach to (from list_machine_sessions)"),
-        name: z.string().describe("A short name to reference this session by, e.g. 'vscode-main'"),
-      }),
-      handler: async (args) => {
-        if (deps.workers.has(args.name)) {
-          return `A worker named '${args.name}' already exists. Choose a different name.`;
-        }
-
-        try {
-          const session = await deps.client.resumeSession(args.session_id, {
-            model: config.copilotModel,
-            onPermissionRequest: approveAll,
-          });
-
-          const worker: WorkerInfo = {
-            name: args.name,
-            session,
-            workingDir: "(attached)",
-            status: "idle",
-            originChannel: getCurrentSourceChannel(),
-          };
-          deps.workers.set(args.name, worker);
-
-          const db = getDb();
-          db.prepare(
-            `INSERT OR REPLACE INTO worker_sessions (name, copilot_session_id, working_dir, status)
-             VALUES (?, ?, '(attached)', 'idle')`
-          ).run(args.name, args.session_id);
-
-          return `Attached to session ${args.session_id.slice(0, 8)}… as worker '${args.name}'. You can now send_to_worker to interact with it.`;
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return `Failed to attach to session: ${msg}`;
-        }
-      },
-    }),
-
     defineTool("list_skills", {
       description:
         "List all available skills Attache knows. Skills are instruction documents that teach the assistant " +
@@ -429,11 +330,14 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
 
     defineTool("list_models", {
       description:
-        "List all available Copilot models. Shows model id, name, and billing tier. " +
+        "List all available models. Shows model id, name, and billing tier. " +
         "Marks the currently active model. Use when the user asks what models are available " +
         "or wants to know which model is in use.",
       parameters: z.object({}),
       handler: async () => {
+        if (!deps.client.capabilities.modelListing) {
+          return `Model listing is not supported by the ${deps.client.name} backend.`;
+        }
         try {
           const models = await deps.client.listModels();
           if (models.length === 0) {
@@ -442,7 +346,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           const current = config.copilotModel;
           const lines = models.map((m) => {
             const active = m.id === current ? " ← active" : "";
-            const billing = m.billing ? ` (${m.billing.multiplier}x)` : "";
+            const billing = m.multiplier ? ` (${m.multiplier}x)` : "";
             return `• ${m.id}${billing}${active}`;
           });
           return `Available models (${models.length}):\n${lines.join("\n")}\n\nCurrent: ${current}`;
@@ -455,23 +359,25 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
 
     defineTool("switch_model", {
       description:
-        "Switch the Copilot model Attache uses for conversations. Takes effect on the next message. " +
+        "Switch the model for conversations. Takes effect on the next message. " +
         "The change is persisted across restarts. Use when the user asks to change or switch models.",
       parameters: z.object({
         model_id: z.string().describe("The model id to switch to (from list_models)"),
       }),
       handler: async (args) => {
         try {
-          const models = await deps.client.listModels();
-          const match = models.find((m) => m.id === args.model_id);
-          if (!match) {
-            const suggestions = models
-              .filter((m) => m.id.includes(args.model_id) || m.id.toLowerCase().includes(args.model_id.toLowerCase()))
-              .map((m) => m.id);
-            const hint = suggestions.length > 0
-              ? ` Did you mean: ${suggestions.join(", ")}?`
-              : " Use list_models to see available options.";
-            return `Model '${args.model_id}' not found.${hint}`;
+          if (deps.client.capabilities.modelListing) {
+            const models = await deps.client.listModels();
+            const match = models.find((m) => m.id === args.model_id);
+            if (!match) {
+              const suggestions = models
+                .filter((m) => m.id.includes(args.model_id) || m.id.toLowerCase().includes(args.model_id.toLowerCase()))
+                .map((m) => m.id);
+              const hint = suggestions.length > 0
+                ? ` Did you mean: ${suggestions.join(", ")}?`
+                : " Use list_models to see available options.";
+              return `Model '${args.model_id}' not found.${hint}`;
+            }
           }
 
           const previous = config.copilotModel;
@@ -588,6 +494,113 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
       },
     }),
   ];
+
+  // Gate Copilot-specific tools on capabilities
+  if (deps.client.capabilities.machineSessionDiscovery) {
+    tools.push(
+      defineTool("list_machine_sessions", {
+        description:
+          "List ALL Copilot CLI sessions on this machine — including sessions started from VS Code, " +
+          "the terminal, or other tools. Shows session ID, summary, working directory. " +
+          "Use this when the user asks about existing sessions running on the machine. " +
+          "By default shows the 20 most recently active sessions.",
+        parameters: z.object({
+          cwd_filter: z.string().optional().describe("Optional: only show sessions whose working directory contains this string"),
+          limit: z.number().int().min(1).max(100).optional().describe("Maximum sessions to return (default 20)"),
+        }),
+        handler: async (args) => {
+          const sessionStateDir = join(homedir(), ".copilot", "session-state");
+          const limit = args.limit || 20;
+
+          let entries: { id: string; cwd: string; summary: string; updatedAt: Date }[] = [];
+
+          try {
+            const dirs = readdirSync(sessionStateDir);
+            for (const dir of dirs) {
+              const yamlPath = join(sessionStateDir, dir, "workspace.yaml");
+              try {
+                const content = readFileSync(yamlPath, "utf-8");
+                const parsed = parseSimpleYaml(content);
+                if (args.cwd_filter && !parsed.cwd?.includes(args.cwd_filter)) continue;
+                entries.push({
+                  id: parsed.id || dir,
+                  cwd: parsed.cwd || "unknown",
+                  summary: parsed.summary || "",
+                  updatedAt: parsed.updated_at ? new Date(parsed.updated_at) : new Date(0),
+                });
+              } catch {
+                // Skip dirs without valid workspace.yaml
+              }
+            }
+          } catch (err: unknown) {
+            if (err instanceof Error && "code" in err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+              return "No Copilot sessions found on this machine (session state directory does not exist yet).";
+            }
+            return "Could not read session state directory.";
+          }
+
+          // Sort by most recently updated
+          entries.sort((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime());
+          entries = entries.slice(0, limit);
+
+          if (entries.length === 0) {
+            return "No Copilot sessions found on this machine.";
+          }
+
+          const lines = entries.map((s) => {
+            const age = formatAge(s.updatedAt);
+            const summary = s.summary ? ` — ${s.summary}` : "";
+            return `• ID: ${s.id}\n  ${s.cwd} (${age})${summary}`;
+          });
+
+          return `Found ${entries.length} session(s) (most recent first):\n${lines.join("\n")}`;
+        },
+      }),
+
+      defineTool("attach_machine_session", {
+        description:
+          "Attach to an existing Copilot CLI session on this machine (e.g. one started from VS Code or terminal). " +
+          "Resumes the session and adds it as a managed worker so you can send prompts to it.",
+        parameters: z.object({
+          session_id: z.string().describe("The session ID to attach to (from list_machine_sessions)"),
+          name: z.string().describe("A short name to reference this session by, e.g. 'vscode-main'"),
+        }),
+        handler: async (args) => {
+          if (deps.workers.has(args.name)) {
+            return `A worker named '${args.name}' already exists. Choose a different name.`;
+          }
+
+          try {
+            const session = await deps.client.resumeSession(args.session_id, {
+              model: config.copilotModel,
+            });
+
+            const worker: WorkerInfo = {
+              name: args.name,
+              session,
+              workingDir: "(attached)",
+              status: "idle",
+              originChannel: getCurrentSourceChannel(),
+            };
+            deps.workers.set(args.name, worker);
+
+            const db = getDb();
+            db.prepare(
+              `INSERT OR REPLACE INTO worker_sessions (name, copilot_session_id, working_dir, status)
+               VALUES (?, ?, '(attached)', 'idle')`
+            ).run(args.name, args.session_id);
+
+            return `Attached to session ${args.session_id.slice(0, 8)}… as worker '${args.name}'. You can now send_to_worker to interact with it.`;
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return `Failed to attach to session: ${msg}`;
+          }
+        },
+      }),
+    );
+  }
+
+  return tools;
 }
 
 function formatAge(date: Date): string {

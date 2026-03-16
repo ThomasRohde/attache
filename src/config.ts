@@ -44,6 +44,7 @@ const configSchema = z.object({
   SELF_EDIT_ENABLED: z.string().optional(),
   PREVENT_SLEEP: z.string().optional(),
   ATTACHE_WORKFOLDER: z.string().min(1).optional(),
+  ATTACHE_BACKEND: z.enum(["copilot", "claude", "codex"]).optional(),
 });
 
 const raw = configSchema.parse({
@@ -56,6 +57,7 @@ const raw = configSchema.parse({
   SELF_EDIT_ENABLED: getEnvValue("ATTACHE_SELF_EDIT"),
   PREVENT_SLEEP: getEnvValue("ATTACHE_PREVENT_SLEEP"),
   ATTACHE_WORKFOLDER: getEnvValue("ATTACHE_WORKFOLDER"),
+  ATTACHE_BACKEND: getEnvValue("ATTACHE_BACKEND") as "copilot" | "claude" | "codex" | undefined,
 });
 
 const parsedUserId = parseStrictPositiveInteger(raw.AUTHORIZED_USER_ID, "AUTHORIZED_USER_ID");
@@ -109,6 +111,9 @@ export const config = {
   },
   get workfolder(): string | undefined {
     return raw.ATTACHE_WORKFOLDER || undefined;
+  },
+  get backend(): string {
+    return raw.ATTACHE_BACKEND || "copilot";
   },
 };
 

@@ -1,11 +1,11 @@
-import type { CopilotClient, CopilotSession } from "@github/copilot-sdk";
+import type { BackendClient, BackendSession } from "../backend/types.js";
 import type { Tier } from "./router.js";
+import { getTierDefaults } from "../backend/registry.js";
 
 // ---------------------------------------------------------------------------
-// Persistent GPT-4.1 classifier session
+// Persistent classifier session
 // ---------------------------------------------------------------------------
 
-const CLASSIFIER_MODEL = "gpt-4.1";
 const CLASSIFY_TIMEOUT_MS = 8_000;
 
 const SYSTEM_PROMPT = `You are a message complexity classifier for an AI assistant running on Attache. Your ONLY job is to classify incoming user messages into one of three tiers. Respond with ONLY the tier name — nothing else.
@@ -19,10 +19,10 @@ Rules:
 - If unsure, respond STANDARD (it's the safe default).
 - Respond with exactly one word: FAST, STANDARD, or PREMIUM.`;
 
-let classifierSession: CopilotSession | undefined;
-let sessionClient: CopilotClient | undefined;
+let classifierSession: BackendSession | undefined;
+let sessionClient: BackendClient | undefined;
 
-async function ensureSession(client: CopilotClient): Promise<CopilotSession> {
+async function ensureSession(client: BackendClient): Promise<BackendSession> {
   // Recreate if the client changed (e.g. after a reset)
   if (classifierSession && sessionClient === client) {
     return classifierSession;
@@ -34,10 +34,11 @@ async function ensureSession(client: CopilotClient): Promise<CopilotSession> {
     classifierSession = undefined;
   }
 
+  const classifierModel = getTierDefaults().classifier;
   classifierSession = await client.createSession({
-    model: CLASSIFIER_MODEL,
+    model: classifierModel,
     streaming: false,
-    systemMessage: { content: SYSTEM_PROMPT },
+    systemMessage: SYSTEM_PROMPT,
   });
   sessionClient = client;
   return classifierSession;
@@ -50,20 +51,17 @@ const TIER_MAP: Record<string, Tier> = {
 };
 
 /**
- * Classify a message using GPT-4.1.
+ * Classify a message using the classifier model.
  * Returns the tier, or null if the classifier is unavailable / times out.
  */
 export async function classifyWithLLM(
-  client: CopilotClient,
+  client: BackendClient,
   message: string,
 ): Promise<Tier | null> {
   try {
     const session = await ensureSession(client);
-    const result = await session.sendAndWait(
-      { prompt: message },
-      CLASSIFY_TIMEOUT_MS,
-    );
-    const raw = (result?.data?.content || "").trim().toUpperCase();
+    const result = await session.sendAndWait(message, CLASSIFY_TIMEOUT_MS);
+    const raw = (result.content || "").trim().toUpperCase();
     return TIER_MAP[raw] ?? "standard";
   } catch (err) {
     console.log(

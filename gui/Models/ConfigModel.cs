@@ -19,6 +19,9 @@ public class ConfigModel
     [JsonPropertyName("currentModel")]
     public string CurrentModel { get; set; } = "";
 
+    [JsonPropertyName("backend")]
+    public string Backend { get; set; } = "copilot";
+
     [JsonPropertyName("telegramEnabled")]
     public bool TelegramEnabled { get; set; }
 }

@@ -13,6 +13,9 @@ public class CapabilitiesModel
     [JsonPropertyName("identity")]
     public CapIdentity? Identity { get; set; }
 
+    [JsonPropertyName("backend")]
+    public CapBackend? Backend { get; set; }
+
     [JsonPropertyName("slashCommands")]
     public List<SlashCommand> SlashCommands { get; set; } = [];
 
@@ -96,4 +99,40 @@ public class CapFeatures
 
     [JsonPropertyName("autoRouting")]
     public bool AutoRouting { get; set; }
+}
+
+public class CapBackend
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    [JsonPropertyName("capabilities")]
+    public CapBackendCapabilities? Capabilities { get; set; }
+}
+
+public class CapBackendCapabilities
+{
+    [JsonPropertyName("customTools")]
+    public bool CustomTools { get; set; }
+
+    [JsonPropertyName("sessionResume")]
+    public bool SessionResume { get; set; }
+
+    [JsonPropertyName("infiniteSessions")]
+    public bool InfiniteSessions { get; set; }
+
+    [JsonPropertyName("persistentClient")]
+    public bool PersistentClient { get; set; }
+
+    [JsonPropertyName("modelListing")]
+    public bool ModelListing { get; set; }
+
+    [JsonPropertyName("skillDirectories")]
+    public bool SkillDirectories { get; set; }
+
+    [JsonPropertyName("structuredOutput")]
+    public bool StructuredOutput { get; set; }
+
+    [JsonPropertyName("machineSessionDiscovery")]
+    public bool MachineSessionDiscovery { get; set; }
 }

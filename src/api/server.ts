@@ -14,6 +14,7 @@ import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { API_TOKEN_PATH, ensureAttacheHome } from "../paths.js";
 import { TOOL_REGISTRY } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
+import { getBackendClient, getBackendName } from "../backend/registry.js";
 import {
   API_EVENT_SCHEMA_VERSION,
   createCancelledEvent,
@@ -119,6 +120,7 @@ app.get("/config/effective", (_req: Request, res: Response) => {
     apiPort: config.apiPort,
     apiBaseUrl: `http://127.0.0.1:${config.apiPort}`,
     currentModel: config.copilotModel,
+    backend: getBackendName(),
     telegramEnabled: config.telegramEnabled,
   });
 });
@@ -205,6 +207,9 @@ app.get("/diagnostics", (_req: Request, res: Response) => {
       productName: identity.productName,
       assistantDisplayName: identity.assistantDisplayName,
     },
+    backend: {
+      name: getBackendName(),
+    },
     routing: {
       currentModel: config.copilotModel,
       activeModel: getActiveModel(),
@@ -275,16 +280,17 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       }
       // Validate and switch model
       try {
-        const { getClient } = await import("../copilot/client.js");
-        const client = await getClient();
-        const models = await client.listModels();
-        const match = models.find((m) => m.id === args);
-        if (!match) {
-          const suggestions = models
-            .filter((m) => m.id.includes(args) || m.id.toLowerCase().includes(args.toLowerCase()))
-            .map((m) => m.id);
-          const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-          return { handled: true, result: `Model '${args}' not found.${hint}` };
+        const client = getBackendClient();
+        if (client.capabilities.modelListing) {
+          const models = await client.listModels();
+          const match = models.find((m) => m.id === args);
+          if (!match) {
+            const suggestions = models
+              .filter((m) => m.id.includes(args) || m.id.toLowerCase().includes(args.toLowerCase()))
+              .map((m) => m.id);
+            const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+            return { handled: true, result: `Model '${args}' not found.${hint}` };
+          }
         }
       } catch {
         // Can't validate — allow the switch
@@ -318,6 +324,27 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
         return { handled: true, result: "Auto-routing disabled" };
       }
       return { handled: true, result: `Usage: /auto on|off` };
+    }
+
+    case "/provider": {
+      if (!args) {
+        return { handled: true, result: `Current provider: ${getBackendName()}` };
+      }
+      const supported = ["copilot", "claude", "codex"];
+      if (!supported.includes(args)) {
+        return { handled: true, result: `Unknown provider '${args}'. Supported: ${supported.join(", ")}` };
+      }
+      const prevBackend = getBackendName();
+      if (args === prevBackend) {
+        return { handled: true, result: `Already using provider: ${args}` };
+      }
+      persistEnvVar("ATTACHE_BACKEND", args);
+      setTimeout(() => {
+        restartDaemon().catch((err) => {
+          console.error(`${LOG_PREFIX} Restart failed:`, err);
+        });
+      }, 1000);
+      return { handled: true, result: `Switching provider from ${prevBackend} to ${args}. Restarting...` };
     }
 
     case "/workers": {
@@ -431,16 +458,13 @@ app.post("/cancel", async (_req: Request, res: Response) => {
 // List available models
 app.get("/models", async (_req: Request, res: Response) => {
   try {
-    const { getClient } = await import("../copilot/client.js");
-    const client = await getClient();
+    const client = getBackendClient();
     const models = await client.listModels();
-    const list = models
-      .filter((m) => m.policy?.state === "enabled" && !m.name.includes("(Internal only)"))
-      .map((m) => ({
-        id: m.id,
-        name: m.name,
-        multiplier: m.billing?.multiplier ?? 0,
-      }));
+    const list = models.map((m) => ({
+      id: m.id,
+      name: m.name,
+      multiplier: m.multiplier,
+    }));
     res.json(list);
   } catch {
     res.json([]);
@@ -459,17 +483,18 @@ app.post("/model", async (req: Request, res: Response) => {
   }
   // Validate against available models before persisting
   try {
-    const { getClient } = await import("../copilot/client.js");
-    const client = await getClient();
-    const models = await client.listModels();
-    const match = models.find((m) => m.id === model);
-    if (!match) {
-      const suggestions = models
-        .filter((m) => m.id.includes(model) || m.id.toLowerCase().includes(model.toLowerCase()))
-        .map((m) => m.id);
-      const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-      res.status(400).json({ error: `Model '${model}' not found.${hint}` });
-      return;
+    const client = getBackendClient();
+    if (client.capabilities.modelListing) {
+      const models = await client.listModels();
+      const match = models.find((m) => m.id === model);
+      if (!match) {
+        const suggestions = models
+          .filter((m) => m.id.includes(model) || m.id.toLowerCase().includes(model.toLowerCase()))
+          .map((m) => m.id);
+        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+        res.status(400).json({ error: `Model '${model}' not found.${hint}` });
+        return;
+      }
     }
   } catch {
     // If we can't validate (client not ready), allow the switch — it'll fail on next message if wrong
@@ -503,6 +528,33 @@ app.post("/auto", (req: Request, res: Response) => {
   console.log(`${LOG_PREFIX} Auto-routing ${updated.enabled ? "enabled" : "disabled"}`);
 
   res.json(updated);
+});
+
+// Get current backend provider
+app.get("/backend", (_req: Request, res: Response) => {
+  const client = getBackendClient();
+  res.json({
+    name: getBackendName(),
+    capabilities: client.capabilities,
+    supported: ["copilot", "claude", "codex"],
+  });
+});
+
+// Switch backend provider (requires daemon restart)
+app.post("/backend", (req: Request, res: Response) => {
+  const { name } = req.body as { name?: string };
+  if (!name || typeof name !== "string") {
+    res.status(400).json({ error: "Missing 'name' in request body" });
+    return;
+  }
+  const supported = ["copilot", "claude", "codex"];
+  if (!supported.includes(name)) {
+    res.status(400).json({ error: `Unknown backend '${name}'. Supported: ${supported.join(", ")}` });
+    return;
+  }
+  const previous = getBackendName();
+  persistEnvVar("ATTACHE_BACKEND", name);
+  res.json({ previous, current: name, restartRequired: true });
 });
 
 // List memories
@@ -543,6 +595,7 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     source?: string;
   }[] = [
     { command: "/model", name: "Switch model", description: "Show or switch the active model", type: "builtIn", usage: "/model [name]" },
+    { command: "/provider", name: "Provider", description: "Show or switch the backend provider", type: "builtIn", usage: "/provider [copilot|claude|codex]" },
     { command: "/auto", name: "Auto-routing", description: "Toggle automatic model routing", type: "builtIn", usage: "/auto on|off" },
     { command: "/workers", name: "List workers", description: "Show active worker sessions", type: "builtIn" },
     { command: "/restart", name: "Restart", description: "Restart the daemon", type: "builtIn" },
@@ -559,12 +612,17 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     });
   }
 
+  const client = getBackendClient();
   res.json({
     version: DAEMON_VERSION,
     schemaVersion: API_EVENT_SCHEMA_VERSION,
     identity: {
       productName: identity.productName,
       assistantDisplayName: identity.assistantDisplayName,
+    },
+    backend: {
+      name: getBackendName(),
+      capabilities: client.capabilities,
     },
     slashCommands,
     tools: TOOL_REGISTRY,
@@ -645,6 +703,7 @@ app.post("/config", (req: Request, res: Response) => {
     "WORKER_TIMEOUT",
     "ASSISTANT_DISPLAY_NAME",
     "ATTACHE_WORKFOLDER",
+    "ATTACHE_BACKEND",
   ]);
 
   let restartRequired = false;
@@ -659,7 +718,7 @@ app.post("/config", (req: Request, res: Response) => {
     }
     persistEnvVar(key, value);
     // Telegram settings and workfolder require restart
-    if (["TELEGRAM_BOT_TOKEN", "AUTHORIZED_USER_ID", "ATTACHE_WORKFOLDER"].includes(key)) {
+    if (["TELEGRAM_BOT_TOKEN", "AUTHORIZED_USER_ID", "ATTACHE_WORKFOLDER", "ATTACHE_BACKEND"].includes(key)) {
       restartRequired = true;
     }
   }

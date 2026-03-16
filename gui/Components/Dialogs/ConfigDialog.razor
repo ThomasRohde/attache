@@ -19,6 +19,20 @@
             {
                 case "model":
                     <div class="form-group">
+                        <label>Provider</label>
+                        <select @bind="_backend">
+                            <option value="copilot">Copilot SDK</option>
+                            <option value="claude">Claude Agent SDK</option>
+                            <option value="codex">Codex SDK</option>
+                        </select>
+                        @if (_backend != _initialBackend)
+                        {
+                            <div class="hint" style="color: var(--warning, #e8a838);">
+                                Switching provider requires a daemon restart.
+                            </div>
+                        }
+                    </div>
+                    <div class="form-group">
                         <label>
                             <input type="checkbox" @bind="_autoRouting" />
                             Enable auto-routing
@@ -77,13 +91,20 @@
                 case "about":
                     <div class="form-group">
                         <label>Attache</label>
-                        <div class="hint">AI orchestrator powered by the GitHub Copilot SDK</div>
+                        <div class="hint">AI orchestrator with multi-provider backend support</div>
                     </div>
                     @if (State.Diagnostics?.Identity is not null)
                     {
                         <div class="form-group">
                             <label>Name</label>
                             <div>@State.Diagnostics.Identity.ProductName</div>
+                        </div>
+                    }
+                    @if (State.Diagnostics?.Backend is not null)
+                    {
+                        <div class="form-group">
+                            <label>Provider</label>
+                            <div>@ProviderDisplayName(State.Diagnostics.Backend.Name)</div>
                         </div>
                     }
                     @if (State.Diagnostics?.Process is not null)
@@ -113,6 +134,8 @@
 
     private string _activeTab = "model";
     private string _model = "";
+    private string _backend = "copilot";
+    private string _initialBackend = "copilot";
     private bool _autoRouting;
     private string _displayName = "";
     private string _workfolder = "";
@@ -138,6 +161,8 @@
         {
             _model = config.CurrentModel;
             _displayName = config.AssistantDisplayName;
+            _backend = config.Backend;
+            _initialBackend = config.Backend;
         }
 
         _models = await modelsTask;
@@ -166,12 +191,31 @@
 
         try
         {
+            bool needsRestart = false;
+
             switch (_activeTab)
             {
                 case "model":
-                    if (!string.IsNullOrWhiteSpace(_model))
-                        await Api.PostModelAsync(_model.Trim());
-                    await Api.PostAutoAsync(_autoRouting);
+                    // Save provider change first (requires restart)
+                    if (_backend != _initialBackend)
+                    {
+                        await Api.PostBackendAsync(_backend);
+                        needsRestart = true;
+                    }
+
+                    if (!needsRestart)
+                    {
+                        // Only save model/auto settings if not restarting
+                        // (they'll use new provider defaults after restart)
+                        if (!string.IsNullOrWhiteSpace(_model))
+                            await Api.PostModelAsync(_model.Trim());
+                        await Api.PostAutoAsync(_autoRouting);
+                    }
+
+                    if (needsRestart)
+                    {
+                        await Api.PostRestartAsync();
+                    }
                     break;
 
                 case "general":
@@ -207,6 +251,14 @@
 
         await OnClose.InvokeAsync();
     }
+
+    private static string ProviderDisplayName(string name) => name switch
+    {
+        "copilot" => "Copilot SDK",
+        "claude" => "Claude Agent SDK",
+        "codex" => "Codex SDK",
+        _ => name,
+    };
 
     private async Task Close() => await OnClose.InvokeAsync();
 }

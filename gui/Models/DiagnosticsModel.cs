@@ -16,11 +16,20 @@ public class DiagnosticsModel
     [JsonPropertyName("identity")]
     public IdentityDiag? Identity { get; set; }
 
+    [JsonPropertyName("backend")]
+    public BackendDiag? Backend { get; set; }
+
     [JsonPropertyName("routing")]
     public RoutingDiag? Routing { get; set; }
 
     [JsonPropertyName("workers")]
     public WorkersDiag? Workers { get; set; }
+}
+
+public class BackendDiag
+{
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
 }
 
 public class ApiDiag

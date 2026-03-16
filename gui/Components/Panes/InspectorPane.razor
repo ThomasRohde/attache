@@ -34,6 +34,10 @@
             <div class="inspector-section">
                 <h3>Daemon</h3>
                 <div class="inspector-row">
+                    <span class="label">Provider</span>
+                    <span class="value">@(State.Diagnostics.Backend?.Name ?? "copilot")</span>
+                </div>
+                <div class="inspector-row">
                     <span class="label">Model</span>
                     <span class="value">
                         @(State.Diagnostics.Routing?.ActiveModel ?? State.Diagnostics.Routing?.CurrentModel ?? "—")

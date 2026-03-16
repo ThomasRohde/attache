@@ -176,6 +176,31 @@ public class ApiClient : IDisposable
         catch { return false; }
     }
 
+    public async Task<string?> GetBackendAsync()
+    {
+        TryLoadToken();
+        try
+        {
+            var json = await _http.GetStringAsync("/backend");
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("name", out var n) ? n.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    public async Task<bool> PostBackendAsync(string name)
+    {
+        TryLoadToken();
+        try
+        {
+            var body = JsonSerializer.Serialize(new { name });
+            using var content = new StringContent(body, Encoding.UTF8, "application/json");
+            var resp = await _http.PostAsync("/backend", content);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
     public async Task<WorkfolderInfo?> GetWorkfolderAsync()
     {
         TryLoadToken();

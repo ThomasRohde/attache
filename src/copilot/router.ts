@@ -1,6 +1,7 @@
 import { getState, setState } from "../store/db.js";
 import { classifyWithLLM } from "./classifier.js";
-import type { CopilotClient } from "@github/copilot-sdk";
+import type { BackendClient } from "../backend/types.js";
+import { getTierDefaults } from "../backend/registry.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -30,28 +31,31 @@ export interface RouteResult {
 }
 
 // ---------------------------------------------------------------------------
-// Default configuration
+// Default configuration (uses dynamic tier defaults from the active backend)
 // ---------------------------------------------------------------------------
 
-const DEFAULT_CONFIG: RouterConfig = {
-  enabled: true,
-  tierModels: {
-    fast: "gpt-4.1",
-    standard: "claude-sonnet-4.6",
-    premium: "claude-opus-4.6",
-  },
-  overrides: [
-    {
-      name: "design",
-      keywords: [
-        "design", "ui", "ux", "css", "layout", "styling", "visual",
-        "mockup", "wireframe", "frontend design", "tailwind", "responsive",
-      ],
-      model: "claude-opus-4.6",
+function getDefaultConfig(): RouterConfig {
+  const tierDefaults = getTierDefaults();
+  return {
+    enabled: true,
+    tierModels: {
+      fast: tierDefaults.fast,
+      standard: tierDefaults.standard,
+      premium: tierDefaults.premium,
     },
-  ],
-  cooldownMessages: 2,
-};
+    overrides: [
+      {
+        name: "design",
+        keywords: [
+          "design", "ui", "ux", "css", "layout", "styling", "visual",
+          "mockup", "wireframe", "frontend design", "tailwind", "responsive",
+        ],
+        model: tierDefaults.premium,
+      },
+    ],
+    cooldownMessages: 2,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Module-level state
@@ -89,15 +93,16 @@ function wordMatch(text: string, keyword: string): boolean {
 // ---------------------------------------------------------------------------
 
 export function getRouterConfig(): RouterConfig {
+  const defaultConfig = getDefaultConfig();
   const stored = getState("router_config");
   if (stored) {
     try {
-      return { ...DEFAULT_CONFIG, ...JSON.parse(stored) };
+      return { ...defaultConfig, ...JSON.parse(stored) };
     } catch {
-      return { ...DEFAULT_CONFIG };
+      return { ...defaultConfig };
     }
   }
-  return { ...DEFAULT_CONFIG };
+  return { ...defaultConfig };
 }
 
 export function updateRouterConfig(partial: Partial<RouterConfig>): RouterConfig {
@@ -120,13 +125,14 @@ export function updateRouterConfig(partial: Partial<RouterConfig>): RouterConfig
 // ---------------------------------------------------------------------------
 
 /**
- * Classify a message using GPT-4.1. Falls back to "standard" if the LLM
- * is unavailable. Background tasks and follow-ups are handled deterministically.
+ * Classify a message using the classifier model. Falls back to "standard" if
+ * the LLM is unavailable. Background tasks and follow-ups are handled
+ * deterministically.
  */
 async function classifyMessage(
   prompt: string,
   recentTiers: Tier[],
-  client?: CopilotClient,
+  client?: BackendClient,
 ): Promise<Tier> {
   const text = sanitize(prompt);
   const lower = text.toLowerCase();
@@ -162,7 +168,7 @@ export async function resolveModel(
   prompt: string,
   currentModel: string,
   recentTiers: Tier[],
-  client?: CopilotClient,
+  client?: BackendClient,
 ): Promise<RouteResult> {
   const config = getRouterConfig();
 

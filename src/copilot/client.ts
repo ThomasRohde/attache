@@ -1,30 +1,19 @@
-import { CopilotClient } from "@github/copilot-sdk";
+import { initBackendClient, getBackendClient, stopBackendClient, resetBackendClient } from "../backend/registry.js";
+import type { BackendClient } from "../backend/types.js";
 
-let client: CopilotClient | undefined;
-
-export async function getClient(): Promise<CopilotClient> {
-  if (!client) {
-    client = new CopilotClient({
-      autoStart: true,
-      autoRestart: true,
-    });
-    await client.start();
-  }
-  return client;
+/**
+ * Get the backend client, initializing if needed.
+ * This delegates to the backend registry instead of directly using CopilotClient.
+ */
+export async function getClient(): Promise<BackendClient> {
+  return initBackendClient();
 }
 
 /** Tear down the existing client and create a fresh one. */
-export async function resetClient(): Promise<CopilotClient> {
-  if (client) {
-    try { await client.stop(); } catch { /* best-effort */ }
-    client = undefined;
-  }
-  return getClient();
+export async function resetClient(): Promise<BackendClient> {
+  return resetBackendClient();
 }
 
 export async function stopClient(): Promise<void> {
-  if (client) {
-    await client.stop();
-    client = undefined;
-  }
+  await stopBackendClient();
 }
