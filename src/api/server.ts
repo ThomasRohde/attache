@@ -291,6 +291,9 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       const previous = config.copilotModel;
       config.copilotModel = args;
       persistModel(args);
+      // Reset orchestrator session so next message uses the new model
+      const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
+      resetForModelSwitch();
       return { handled: true, result: `Switched model from ${previous} to ${args}` };
     }
 

@@ -51,6 +51,14 @@ export function getLastRouteResult(): RouteResult | undefined {
   return lastRouteResult;
 }
 
+/** Reset session state after a manual model switch (e.g. via /model command). */
+export function resetForModelSwitch(): void {
+  orchestratorSession = undefined;
+  currentSessionModel = undefined;
+  lastRouteResult = undefined;
+  deleteState(ORCHESTRATOR_SESSION_KEY);
+}
+
 // Persistent orchestrator session
 let orchestratorSession: CopilotSession | undefined;
 // Coalesces concurrent ensureOrchestratorSession calls

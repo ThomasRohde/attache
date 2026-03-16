@@ -72,6 +72,9 @@ export function createBot(): Bot {
       const previous = config.copilotModel;
       config.copilotModel = arg;
       persistModel(arg);
+      // Reset orchestrator session so next message uses the new model
+      const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
+      resetForModelSwitch();
       await ctx.reply(`Model: ${previous} → ${arg}`);
     } else {
       await ctx.reply(`Current model: ${config.copilotModel}`);

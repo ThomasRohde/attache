@@ -31,7 +31,7 @@
                     <div class="transcript-entry">
                         <div class="entry-header">
                             <span class="@(entry.Role == "user" ? "role-user" : "role-assistant")">
-                                @(entry.Role == "user" ? "You" : "Assistant")
+                                @(entry.Role == "user" ? "You" : AssistantName)
                             </span>
                             @if (!string.IsNullOrEmpty(entry.Source) && entry.Source != "tui")
                             {
@@ -53,7 +53,7 @@
                 {
                     <div class="transcript-entry">
                         <div class="entry-header">
-                            <span class="role-assistant">Assistant</span>
+                            <span class="role-assistant">@AssistantName</span>
                             <span class="timestamp">now</span>
                         </div>
                         <div class="entry-content streaming-cursor">
@@ -87,6 +87,11 @@
 @code {
     // Snapshot to avoid "collection was modified" during render
     private List<TranscriptEntry> TranscriptSnapshot => State.TranscriptEntries.ToList();
+
+    private string AssistantName =>
+        !string.IsNullOrEmpty(State.Capabilities?.Identity?.AssistantDisplayName)
+            ? State.Capabilities.Identity.AssistantDisplayName
+            : "Assistant";
 
     private int _lastEntryCount;
     private string? _lastStreamingContent;
