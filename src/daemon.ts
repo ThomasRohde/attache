@@ -183,7 +183,8 @@ export async function restartDaemon(): Promise<void> {
   // Spawn a detached replacement process with the same args (include execArgv for tsx/loaders)
   const child = spawn(process.execPath, [...process.execArgv, ...process.argv.slice(1)], {
     detached: true,
-    stdio: "inherit",
+    stdio: "ignore",
+    windowsHide: true,
     env: {
       ...process.env,
       [PRIMARY_RUNTIME_ENV.restarted]: "1",

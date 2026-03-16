@@ -73,8 +73,8 @@ public class DaemonManager
         fileName = "";
         arguments = "";
 
-        // Check known paths first to avoid spawning where.exe (which can flash a console)
-        var nodePath = FindNodeExe() ?? TryWhich("node");
+        // Check known paths first, then scan PATH — never spawn where.exe
+        var nodePath = FindNodeExe() ?? TryFindInPath("node.exe");
 
         // 1. Try walking up from the exe directory (dev / co-located layout — always freshest)
         if (nodePath is not null)
@@ -119,44 +119,51 @@ public class DaemonManager
         return false;
     }
 
-    private static string? TryWhich(string name)
+    /// <summary>
+    /// Scans PATH entries directly for the given executable — no subprocess spawned.
+    /// Includes the npm global bin dir in the search even if it's not already in PATH.
+    /// </summary>
+    private static string? TryFindInPath(string executable)
     {
-        try
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var npmBin = Path.Combine(appData, "npm");
+        var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
+
+        // Prepend the npm bin dir so npm-shim node is found if system node isn't
+        var searchPath = currentPath.Contains(npmBin, StringComparison.OrdinalIgnoreCase)
+            ? currentPath
+            : $"{npmBin};{currentPath}";
+
+        foreach (var segment in searchPath.Split(';', StringSplitOptions.RemoveEmptyEntries))
         {
-            var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            var npmBin = Path.Combine(appData, "npm");
-            var currentPath = Environment.GetEnvironmentVariable("PATH") ?? "";
-            var augmentedPath = currentPath.Contains(npmBin, StringComparison.OrdinalIgnoreCase)
-                ? currentPath
-                : $"{npmBin};{currentPath}";
-
-            var psi = new ProcessStartInfo("where.exe", name)
-            {
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-            };
-            psi.EnvironmentVariables["PATH"] = augmentedPath;
-
-            using var p = Process.Start(psi)!;
-            var output = p.StandardOutput.ReadLine()?.Trim();
-            p.WaitForExit(2000);
-            return (p.ExitCode == 0 && !string.IsNullOrEmpty(output)) ? output : null;
+            var dir = segment.Trim().Trim('"');
+            if (string.IsNullOrEmpty(dir)) continue;
+            var candidate = Path.Combine(dir, executable);
+            if (File.Exists(candidate))
+                return candidate;
         }
-        catch { return null; }
+        return null;
     }
 
     private static string? FindNodeExe()
     {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
         var candidates = new[]
         {
+            // Standard installer
             @"C:\Program Files\nodejs\node.exe",
             @"C:\Program Files (x86)\nodejs\node.exe",
-            Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                @"nvm\current\node.exe"),
+            // NVM for Windows (symlink-style current)
+            Path.Combine(appData, @"nvm\current\node.exe"),
+            // Volta shim
+            Path.Combine(localAppData, @"Volta\bin\node.exe"),
+            // Scoop (nodejs and nodejs-lts)
+            Path.Combine(userProfile, @"scoop\apps\nodejs\current\node.exe"),
+            Path.Combine(userProfile, @"scoop\apps\nodejs-lts\current\node.exe"),
+            Path.Combine(userProfile, @"scoop\shims\node.exe"),
         };
         return candidates.FirstOrDefault(File.Exists);
     }
