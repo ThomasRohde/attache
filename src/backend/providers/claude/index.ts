@@ -36,8 +36,8 @@ export class ClaudeBackendClient implements BackendClient {
   };
 
   private state: ConnectionState = "disconnected";
-
   private useExplicitApiKey = false;
+  private cachedModels: ModelInfo[] | undefined;
 
   async start(): Promise<void> {
     // Only use ANTHROPIC_API_KEY if it's explicitly in the user's .env file,
@@ -66,7 +66,7 @@ export class ClaudeBackendClient implements BackendClient {
   }
 
   async listModels(): Promise<ModelInfo[]> {
-    return CLAUDE_MODELS;
+    return this.cachedModels ?? CLAUDE_MODELS;
   }
 
   async createSession(config: SessionConfig): Promise<BackendSession> {
@@ -103,6 +103,17 @@ export class ClaudeBackendClient implements BackendClient {
     opts.stderr = (data: string) => {
       const trimmed = data.trim();
       if (trimmed) console.error(`${LOG_PREFIX} [claude-sdk] ${trimmed}`);
+    };
+
+    // Opportunistic model cache — update when SDK reports available models
+    opts.onModelsDiscovered = (models) => {
+      this.cachedModels = models.map((m) => ({
+        id: m.value,
+        name: m.displayName || m.value,
+        multiplier: 0,
+        enabled: true,
+      }));
+      console.log(`${LOG_PREFIX} Cached ${this.cachedModels.length} models from Claude SDK`);
     };
 
     if (sessionConfig.systemMessage !== undefined) {

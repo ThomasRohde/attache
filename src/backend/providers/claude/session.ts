@@ -20,6 +20,8 @@ export interface ClaudeQueryOptions {
   includePartialMessages: boolean;
   env?: Record<string, string | undefined>;
   stderr?: (data: string) => void;
+  /** Called when the SDK reports available models (opportunistic cache update). */
+  onModelsDiscovered?: (models: { value: string; displayName: string }[]) => void;
 }
 
 /**
@@ -85,6 +87,14 @@ export class ClaudeBackendSession implements BackendSession {
             const sysMsg = msg as any;
             if (sysMsg.subtype === "init" && sysMsg.session_id) {
               this._sessionId = sysMsg.session_id;
+              // Opportunistically fetch available models from the running process
+              if (this.options.onModelsDiscovered && this._queryCount === 1) {
+                q.supportedModels()
+                  .then((models) => {
+                    if (models?.length) this.options.onModelsDiscovered!(models);
+                  })
+                  .catch(() => { /* best-effort */ });
+              }
             }
             break;
           }

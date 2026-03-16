@@ -15,7 +15,7 @@ import { join, sep, resolve } from "path";
 import { homedir } from "os";
 import { TOOL_REGISTRY, type WorkerInfo } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
-import { getBackendClient, getBackendName } from "../backend/registry.js";
+import { getBackendClient, getBackendName, getStaticModels } from "../backend/registry.js";
 import {
   API_EVENT_SCHEMA_VERSION,
   createCancelledEvent,
@@ -573,10 +573,18 @@ app.post("/cancel", async (_req: Request, res: Response) => {
 });
 
 // List available models
-app.get("/models", async (_req: Request, res: Response) => {
+app.get("/models", async (req: Request, res: Response) => {
+  const provider = typeof req.query.provider === "string" ? req.query.provider : undefined;
   try {
-    const client = getBackendClient();
-    const models = await client.listModels();
+    let models;
+    if (provider && provider !== getBackendName()) {
+      // Requested a different provider than active — return hardcoded list
+      models = getStaticModels(provider);
+    } else {
+      // Active backend — use live listing (may be dynamic or cached)
+      const client = getBackendClient();
+      models = await client.listModels();
+    }
     const list = models.map((m) => ({
       id: m.id,
       name: m.name,

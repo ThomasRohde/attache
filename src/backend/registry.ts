@@ -1,6 +1,8 @@
-import type { BackendClient } from "./types.js";
+import type { BackendClient, ModelInfo } from "./types.js";
 import { CopilotBackendClient } from "./providers/copilot/index.js";
 import { ClaudeBackendClient } from "./providers/claude/index.js";
+import { COPILOT_MODELS } from "./providers/copilot/models.js";
+import { CLAUDE_MODELS } from "./providers/claude/models.js";
 
 // ---------------------------------------------------------------------------
 // Singleton backend client
@@ -48,6 +50,15 @@ export function getBackendClient(): BackendClient {
 /** Get the name of the active backend. */
 export function getBackendName(): string {
   return backendName;
+}
+
+/** Get hardcoded models for any provider (used when that provider isn't the active backend). */
+export function getStaticModels(provider: string): ModelInfo[] {
+  switch (provider) {
+    case "copilot": return COPILOT_MODELS;
+    case "claude":  return CLAUDE_MODELS;
+    default:        return [];
+  }
 }
 
 /** Stop the backend client and clear the singleton. */
