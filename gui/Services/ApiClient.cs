@@ -115,12 +115,13 @@ public class ApiClient : IDisposable
         catch { return null; }
     }
 
-    public async Task<List<ModelInfo>> GetModelsAsync()
+    public async Task<List<ModelInfo>> GetModelsAsync(string? provider = null)
     {
         TryLoadToken();
         try
         {
-            var json = await _http.GetStringAsync("/models");
+            var url = provider is not null ? $"/models?provider={Uri.EscapeDataString(provider)}" : "/models";
+            var json = await _http.GetStringAsync(url);
             return JsonSerializer.Deserialize<List<ModelInfo>>(json, JsonOpts) ?? [];
         }
         catch { return []; }

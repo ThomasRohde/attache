@@ -1,5 +1,5 @@
 import type { BackendClient, BackendSession } from "../backend/types.js";
-import { resetBackendClient } from "../backend/registry.js";
+import { resetBackendClient, getDefaultModelForProvider } from "../backend/registry.js";
 import { createTools, TOOL_REGISTRY, type WorkerInfo } from "./tools.js";
 import { getOrchestratorSystemMessage } from "./system-message.js";
 import { config, DEFAULT_MODEL } from "../config.js";
@@ -242,12 +242,19 @@ export async function initOrchestrator(client: BackendClient): Promise<void> {
   backendClient = client;
   const { mcpServers, skillDirectories } = getSessionConfig();
 
-  // If the backend changed since last run, clear saved session.
-  // Sessions are not portable between backends.
+  // If the backend changed since last run, clear saved session and reset model
+  // to the new provider's default. Sessions are not portable between backends.
   const previousBackend = getState(ORCHESTRATOR_BACKEND_KEY);
   if (previousBackend && previousBackend !== client.name) {
     console.log(`${LOG_PREFIX} Backend changed from '${previousBackend}' to '${client.name}' — resetting session`);
     deleteState(ORCHESTRATOR_SESSION_KEY);
+
+    // Auto-switch to the new provider's default model
+    const providerDefault = getDefaultModelForProvider(client.name);
+    if (providerDefault) {
+      console.log(`${LOG_PREFIX} Switching model to ${client.name} default: ${providerDefault}`);
+      config.copilotModel = providerDefault;
+    }
   }
   setState(ORCHESTRATOR_BACKEND_KEY, client.name);
 
@@ -258,8 +265,9 @@ export async function initOrchestrator(client: BackendClient): Promise<void> {
       const configured = config.copilotModel;
       const isAvailable = models.some((m) => m.id === configured);
       if (!isAvailable) {
-        const fallback = DEFAULT_MODEL;
-        console.log(`${LOG_PREFIX} ⚠️ Configured model '${configured}' is not available. Falling back to '${fallback}'.`);
+        // Use the first model from the provider's own list, not the global default
+        const fallback = getDefaultModelForProvider(client.name) || DEFAULT_MODEL;
+        console.log(`${LOG_PREFIX} ⚠️ Configured model '${configured}' is not available on ${client.name}. Falling back to '${fallback}'.`);
         config.copilotModel = fallback;
       }
     } catch (err) {

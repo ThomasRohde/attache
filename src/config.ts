@@ -44,8 +44,9 @@ const configSchema = z.object({
   SELF_EDIT_ENABLED: z.string().optional(),
   PREVENT_SLEEP: z.string().optional(),
   ATTACHE_WORKFOLDER: z.string().min(1).optional(),
-  ATTACHE_BACKEND: z.enum(["copilot", "claude"]).optional(),
+  ATTACHE_BACKEND: z.enum(["copilot", "claude", "codex"]).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  OPENAI_API_KEY: z.string().min(1).optional(),
 });
 
 const raw = configSchema.parse({
@@ -58,8 +59,9 @@ const raw = configSchema.parse({
   SELF_EDIT_ENABLED: getEnvValue("ATTACHE_SELF_EDIT"),
   PREVENT_SLEEP: getEnvValue("ATTACHE_PREVENT_SLEEP"),
   ATTACHE_WORKFOLDER: getEnvValue("ATTACHE_WORKFOLDER"),
-  ATTACHE_BACKEND: getEnvValue("ATTACHE_BACKEND") as "copilot" | "claude" | undefined,
+  ATTACHE_BACKEND: getEnvValue("ATTACHE_BACKEND") as "copilot" | "claude" | "codex" | undefined,
   ANTHROPIC_API_KEY: getEnvValue("ANTHROPIC_API_KEY"),
+  OPENAI_API_KEY: getEnvValue("OPENAI_API_KEY"),
 });
 
 const parsedUserId = parseStrictPositiveInteger(raw.AUTHORIZED_USER_ID, "AUTHORIZED_USER_ID");
@@ -119,6 +121,9 @@ export const config = {
   },
   get anthropicApiKey(): string | undefined {
     return raw.ANTHROPIC_API_KEY;
+  },
+  get openaiApiKey(): string | undefined {
+    return raw.OPENAI_API_KEY;
   },
 };
 

@@ -455,7 +455,7 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       if (!args) {
         return { handled: true, result: `Current provider: ${getBackendName()}` };
       }
-      const supported = ["copilot", "claude"];
+      const supported = ["copilot", "claude", "codex"];
       if (!supported.includes(args)) {
         return { handled: true, result: `Unknown provider '${args}'. Supported: ${supported.join(", ")}` };
       }
@@ -636,7 +636,7 @@ app.get("/backend", (_req: Request, res: Response) => {
   res.json({
     name: getBackendName(),
     capabilities: client.capabilities,
-    supported: ["copilot", "claude"],
+    supported: ["copilot", "claude", "codex"],
   });
 });
 
@@ -647,7 +647,7 @@ app.post("/backend", (req: Request, res: Response) => {
     res.status(400).json({ error: "Missing 'name' in request body" });
     return;
   }
-  const supported = ["copilot", "claude"];
+  const supported = ["copilot", "claude", "codex"];
   if (!supported.includes(name)) {
     res.status(400).json({ error: `Unknown backend '${name}'. Supported: ${supported.join(", ")}` });
     return;
@@ -840,6 +840,7 @@ app.post("/config", (req: Request, res: Response) => {
     "ATTACHE_WORKFOLDER",
     "ATTACHE_BACKEND",
     "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
   ]);
 
   let restartRequired = false;

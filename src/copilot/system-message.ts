@@ -32,11 +32,15 @@ This restriction does NOT apply to:
 
   const osName = process.platform === "darwin" ? "macOS" : process.platform === "win32" ? "Windows" : "Linux";
   const isClaude = opts?.backendName === "claude";
+  const isCodex = opts?.backendName === "codex";
+  const isToolless = isClaude || isCodex;
   const apiPort = opts?.apiPort || config.apiPort;
-  const sdkName = isClaude ? "Claude Agent SDK" : "Copilot SDK";
-  const workerLabel = isClaude ? "Claude agent sessions" : "Copilot CLI instances";
+  const sdkName = isClaude ? "Claude Agent SDK" : isCodex ? "Codex SDK" : "Copilot SDK";
+  const workerLabel = isToolless
+    ? (isCodex ? "Codex agent sessions" : "Claude agent sessions")
+    : "Copilot CLI instances";
 
-  const capabilitiesBlock = isClaude
+  const capabilitiesBlock = isToolless
     ? `1. **Direct conversation**: You can answer questions, have discussions, and help think through problems — no tools needed.
 2. **Worker sessions**: You can spin up ${workerLabel} (workers) to do coding tasks, run commands, read/write files, debug, and more. Workers run in the background and report back when done.
 3. **Skills**: You have a modular skill system. Skills teach you how to use external tools such as email, browsers, and CLIs. You can learn new skills on the fly.
@@ -47,15 +51,15 @@ This restriction does NOT apply to:
 4. **Skills**: You have a modular skill system. Skills teach you how to use external tools such as email, browsers, and CLIs. You can learn new skills on the fly.
 5. **MCP servers**: You connect to MCP tool servers for extended capabilities.`;
 
-  const workerRoleLabel = isClaude ? "a worker session" : "a worker Copilot session";
+  const workerRoleLabel = isToolless ? "a worker session" : "a worker Copilot session";
 
-  const workerDispatchBlock = isClaude
+  const workerDispatchBlock = isToolless
     ? `- **For delegation: one curl call, one brief response.** Use the Bash tool to \`curl\` the worker API and respond with a short acknowledgment.`
     : `- **For delegation: one tool call, one brief response.** Call \`create_worker_session\` with \`initial_prompt\` and respond with a short acknowledgment.`;
 
-  const toolSection = isClaude ? getClaudeToolSection(identity.productName, apiPort) : getCopilotToolSection(identity.productName);
+  const toolSection = isToolless ? getRestApiToolSection(identity.productName, apiPort) : getCopilotToolSection(identity.productName);
 
-  const memoryToolBlock = isClaude
+  const memoryToolBlock = isToolless
     ? `12. **You have persistent memory.** For important facts that should survive a session reset, use the memory API (POST /memory).
 13. **Proactive memory**: When the user shares preferences, project details, people info, or routines, proactively save to memory with source "auto".`
     : `12. **You have persistent memory.** For important facts that should survive a session reset, use the \`remember\` tool.
@@ -68,9 +72,9 @@ This restriction does NOT apply to:
 You are a Node.js daemon process built with the ${sdkName}. Here's how you work:
 
 - **Telegram bot**: A mobile-friendly interface. Messages tagged with \`[via telegram]\` come from the user's phone or Telegram desktop. Keep responses concise and easy to skim.
-- **Local TUI**: An Ink terminal UI on the local machine. Messages tagged with \`[via tui]\`. You can be more detailed here.
+- **Desktop GUI**: A Blazor Hybrid desktop app on the local machine. Messages tagged with \`[via tui]\`. You can be more detailed here.
 - **Background tasks**: Messages tagged with \`[via background]\` are results from worker sessions you dispatched. Summarize and relay these results to the user.
-- **HTTP API**: You expose a local API on port ${apiPort} for programmatic access and the TUI.
+- **HTTP API**: You expose a local API on port ${apiPort} for programmatic access and the desktop GUI.
 
 When no source tag is present, assume Telegram.
 
@@ -165,7 +169,7 @@ function getCopilotToolSection(productName: string): string {
 - \`forget\`: Remove a specific memory by ID.`;
 }
 
-function getClaudeToolSection(productName: string, apiPort: number): string {
+function getRestApiToolSection(productName: string, apiPort: number): string {
   return `## Tool API (use via Bash + curl)
 
 You have built-in tools (Read, Write, Edit, Bash, Glob, Grep) for coding tasks in **your own working directory**. For ${productName}-specific operations (workers, memory, models), use the HTTP API via Bash + curl.

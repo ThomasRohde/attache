@@ -1,8 +1,10 @@
 import type { BackendClient, ModelInfo } from "./types.js";
 import { CopilotBackendClient } from "./providers/copilot/index.js";
 import { ClaudeBackendClient } from "./providers/claude/index.js";
+import { CodexBackendClient } from "./providers/codex/index.js";
 import { COPILOT_MODELS } from "./providers/copilot/models.js";
 import { CLAUDE_MODELS } from "./providers/claude/models.js";
+import { CODEX_MODELS } from "./providers/codex/models.js";
 
 // ---------------------------------------------------------------------------
 // Singleton backend client
@@ -27,9 +29,11 @@ export async function initBackendClient(name?: string): Promise<BackendClient> {
     case "claude":
       backendClient = new ClaudeBackendClient();
       break;
-    // Phase 4: codex
+    case "codex":
+      backendClient = new CodexBackendClient();
+      break;
     default:
-      throw new Error(`Unknown backend: '${backendName}'. Supported: copilot, claude`);
+      throw new Error(`Unknown backend: '${backendName}'. Supported: copilot, claude, codex`);
   }
 
   await backendClient.start();
@@ -57,8 +61,15 @@ export function getStaticModels(provider: string): ModelInfo[] {
   switch (provider) {
     case "copilot": return COPILOT_MODELS;
     case "claude":  return CLAUDE_MODELS;
+    case "codex":   return CODEX_MODELS;
     default:        return [];
   }
+}
+
+/** Get the default (first) model ID for a given provider. */
+export function getDefaultModelForProvider(provider: string): string | undefined {
+  const models = getStaticModels(provider);
+  return models.length > 0 ? models[0].id : undefined;
 }
 
 /** Stop the backend client and clear the singleton. */

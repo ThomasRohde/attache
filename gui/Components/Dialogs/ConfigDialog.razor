@@ -20,7 +20,7 @@
                 case "model":
                     <div class="form-group">
                         <label>Provider</label>
-                        <select @bind="_backend">
+                        <select value="@_backend" @onchange="OnBackendChanged">
                             <option value="copilot">Copilot SDK</option>
                             <option value="claude">Claude Agent SDK</option>
                             <option value="codex">Codex SDK</option>
@@ -232,6 +232,25 @@
         }
 
         await OnClose.InvokeAsync();
+    }
+
+    private async Task OnBackendChanged(ChangeEventArgs e)
+    {
+        var newBackend = e.Value?.ToString() ?? _backend;
+        if (newBackend == _backend) return;
+        _backend = newBackend;
+
+        // Fetch models for the newly selected provider
+        var models = await Api.GetModelsAsync(_backend);
+        if (models.Count == 0)
+            models = FallbackModels;
+        _models = models;
+
+        // Auto-select first model if current model isn't in the new list
+        if (!_models.Any(m => m.Id == _model) && _models.Count > 0)
+            _model = _models[0].Id;
+
+        StateHasChanged();
     }
 
     private static string ProviderDisplayName(string name) => name switch

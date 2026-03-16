@@ -149,7 +149,7 @@
         List<ParamOption>? options = command switch
         {
             "/model" => await GetModelParamsAsync(),
-            "/provider" => [new("copilot", "Copilot SDK"), new("claude", "Claude Agent SDK")],
+            "/provider" => [new("copilot", "Copilot SDK"), new("claude", "Claude Agent SDK"), new("codex", "Codex SDK")],
             _ => null
         };
 
