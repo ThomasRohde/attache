@@ -76,6 +76,9 @@ public class RoutingDiag
     [JsonPropertyName("currentModel")]
     public string CurrentModel { get; set; } = "";
 
+    [JsonPropertyName("activeModel")]
+    public string? ActiveModel { get; set; }
+
     [JsonPropertyName("autoRouting")]
     public AutoRoutingDiag? AutoRouting { get; set; }
 

@@ -51,6 +51,11 @@ export function getLastRouteResult(): RouteResult | undefined {
   return lastRouteResult;
 }
 
+/** The model that will be used for the next session (auto-routed or manual). */
+export function getActiveModel(): string {
+  return currentSessionModel || config.copilotModel;
+}
+
 /** Reset session state after a manual model switch (e.g. via /model command). */
 export function resetForModelSwitch(): void {
   orchestratorSession = undefined;
@@ -172,6 +177,7 @@ async function createOrResumeSession(): Promise<CopilotSession> {
   const client = await ensureClient();
   const { tools, mcpServers, skillDirectories } = getSessionConfig();
   const memorySummary = getMemorySummary();
+  const modelToUse = currentSessionModel || config.copilotModel;
 
   const infiniteSessions = {
     enabled: true,
@@ -183,9 +189,9 @@ async function createOrResumeSession(): Promise<CopilotSession> {
   const savedSessionId = getState(ORCHESTRATOR_SESSION_KEY);
   if (savedSessionId) {
     try {
-      console.log(`${LOG_PREFIX} Resuming orchestrator session ${savedSessionId.slice(0, 8)}…`);
+      console.log(`${LOG_PREFIX} Resuming orchestrator session ${savedSessionId.slice(0, 8)} with model ${modelToUse}…`);
       const session = await client.resumeSession(savedSessionId, {
-        model: config.copilotModel,
+        model: modelToUse,
         configDir: SESSIONS_DIR,
         streaming: true,
         systemMessage: {
@@ -200,8 +206,8 @@ async function createOrResumeSession(): Promise<CopilotSession> {
         onPermissionRequest: approveAll,
         infiniteSessions,
       });
-      console.log(`${LOG_PREFIX} Resumed orchestrator session successfully`);
-      currentSessionModel = config.copilotModel;
+      console.log(`${LOG_PREFIX} Resumed orchestrator session successfully (model: ${modelToUse})`);
+      currentSessionModel = modelToUse;
       return session;
     } catch (err) {
       console.log(`${LOG_PREFIX} Could not resume session: ${err instanceof Error ? err.message : err}. Creating new.`);
@@ -210,9 +216,9 @@ async function createOrResumeSession(): Promise<CopilotSession> {
   }
 
   // Create a fresh session
-  console.log(`${LOG_PREFIX} Creating new persistent orchestrator session`);
+  console.log(`${LOG_PREFIX} Creating new orchestrator session with model ${modelToUse}`);
   const session = await client.createSession({
-    model: config.copilotModel,
+    model: modelToUse,
     configDir: SESSIONS_DIR,
     streaming: true,
     systemMessage: {
@@ -245,7 +251,7 @@ async function createOrResumeSession(): Promise<CopilotSession> {
     }
   }
 
-  currentSessionModel = config.copilotModel;
+  currentSessionModel = modelToUse;
   return session;
 }
 
@@ -359,11 +365,12 @@ async function processQueue(): Promise<void> {
       // Route the model before executing
       const routeResult = await resolveModel(item.prompt, currentSessionModel || config.copilotModel, recentTiers, copilotClient);
       if (routeResult.switched) {
-        console.log(`${LOG_PREFIX} Auto: switching to ${routeResult.model} (${routeResult.overrideName || routeResult.tier})`);
-        config.copilotModel = routeResult.model;
+        console.log(`${LOG_PREFIX} Router: switching to ${routeResult.model} (${routeResult.overrideName || routeResult.tier})`);
         orchestratorSession = undefined;
         deleteState(ORCHESTRATOR_SESSION_KEY);
       }
+      // Track the routed model separately from config.copilotModel (user's preference)
+      currentSessionModel = routeResult.model;
       if (routeResult.tier) {
         recentTiers.push(routeResult.tier);
         if (recentTiers.length > 5) recentTiers = recentTiers.slice(-5);

@@ -1,6 +1,7 @@
 import { Bot, type Context } from "grammy";
 import { config, persistModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers, getLastRouteResult } from "../copilot/orchestrator.js";
+import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
 import { searchMemories } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
@@ -75,7 +76,13 @@ export function createBot(): Bot {
       // Reset orchestrator session so next message uses the new model
       const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
       resetForModelSwitch();
-      await ctx.reply(`Model: ${previous} → ${arg}`);
+      // Disable auto-routing — user explicitly chose a model
+      const wasAutoRouting = getRouterConfig().enabled;
+      if (wasAutoRouting) {
+        updateRouterConfig({ enabled: false });
+      }
+      const note = wasAutoRouting ? " (auto-routing disabled)" : "";
+      await ctx.reply(`Model: ${previous} → ${arg}${note}`);
     } else {
       await ctx.reply(`Current model: ${config.copilotModel}`);
     }

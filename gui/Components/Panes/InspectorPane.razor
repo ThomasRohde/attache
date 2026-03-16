@@ -36,21 +36,14 @@
                 <div class="inspector-row">
                     <span class="label">Model</span>
                     <span class="value">
-                        @if (State.Diagnostics.Routing?.AutoRouting?.Enabled == true)
-                        {
-                            <span style="color: var(--green);">auto</span>
-                        }
-                        else
-                        {
-                            @(State.Diagnostics.Routing?.CurrentModel ?? "—")
-                        }
+                        @(State.Diagnostics.Routing?.ActiveModel ?? State.Diagnostics.Routing?.CurrentModel ?? "—")
                     </span>
                 </div>
-                @if (State.Diagnostics.Routing?.LastRoute is not null)
+                @if (State.Diagnostics.Routing?.AutoRouting?.Enabled == true)
                 {
                     <div class="inspector-row">
-                        <span class="label">Last route</span>
-                        <span class="value">@State.Diagnostics.Routing.LastRoute.Tier / @State.Diagnostics.Routing.LastRoute.Model</span>
+                        <span class="label">Routing</span>
+                        <span class="value" style="color: var(--green);">auto</span>
                     </div>
                 }
                 <div class="inspector-row">

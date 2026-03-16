@@ -3,7 +3,7 @@ import type { Request, Response, NextFunction } from "express";
 import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { randomBytes } from "crypto";
 import { execSync } from "child_process";
-import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResult } from "../copilot/orchestrator.js";
+import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getLastRouteResult, getActiveModel } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistModel, persistEnvVar } from "../config.js";
 import { getRouterConfig, updateRouterConfig } from "../copilot/router.js";
@@ -207,6 +207,7 @@ app.get("/diagnostics", (_req: Request, res: Response) => {
     },
     routing: {
       currentModel: config.copilotModel,
+      activeModel: getActiveModel(),
       autoRouting: getRouterConfig(),
       lastRoute: lastRoute ?? null,
     },
@@ -294,7 +295,13 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       // Reset orchestrator session so next message uses the new model
       const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
       resetForModelSwitch();
-      return { handled: true, result: `Switched model from ${previous} to ${args}` };
+      // Disable auto-routing — user explicitly chose a model
+      const wasAutoRouting = getRouterConfig().enabled;
+      if (wasAutoRouting) {
+        updateRouterConfig({ enabled: false });
+      }
+      const note = wasAutoRouting ? " (auto-routing disabled)" : "";
+      return { handled: true, result: `Switched model from ${previous} to ${args}${note}` };
     }
 
     case "/auto": {
