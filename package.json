@@ -20,6 +20,8 @@
     "daemon": "tsx src/daemon.ts",
     "dev": "tsx --watch src/daemon.ts",
     "postinstall": "node scripts/postinstall.js",
+    "reload": "node scripts/reload.mjs",
+    "reload:all": "node scripts/reload.mjs --all",
     "test": "echo \"No test suite yet\"",
     "prepublishOnly": "npm run build:ts"
   },
