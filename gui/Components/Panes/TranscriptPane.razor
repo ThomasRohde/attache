@@ -63,7 +63,7 @@
                     </div>
                 }
 
-                @if (State.StreamingContent is not null)
+                @if (State.StreamingContent is not null && State.SelectedChannel == "tui")
                 {
                     <div class="transcript-entry">
                         <div class="entry-header">
@@ -99,13 +99,32 @@
 </div>
 
 @code {
-    // Snapshot to avoid "collection was modified" during render
-    private List<TranscriptEntry> TranscriptSnapshot => State.TranscriptEntries.ToList();
+    // Snapshot filtered by selected channel
+    private List<TranscriptEntry> TranscriptSnapshot =>
+        State.TranscriptEntries
+            .Where(e => e.Source == State.SelectedChannel)
+            .ToList();
 
     private string AssistantName =>
         !string.IsNullOrEmpty(State.Capabilities?.Identity?.AssistantDisplayName)
             ? State.Capabilities.Identity.AssistantDisplayName
             : "Assistant";
+
+    private static readonly Dictionary<string, string> ChannelLabels = new()
+    {
+        ["tui"] = "GUI",
+        ["telegram"] = "TELE",
+    };
+
+    private static string ChannelLabel(string source) =>
+        ChannelLabels.TryGetValue(source, out var label) ? label : source.ToUpperInvariant();
+
+    private static int ChannelOrder(string source) => source switch
+    {
+        "tui" => 0,
+        "telegram" => 1,
+        _ => 2,
+    };
 
     private int _lastEntryCount;
     private string? _lastStreamingContent;
