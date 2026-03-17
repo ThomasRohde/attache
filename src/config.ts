@@ -88,13 +88,25 @@ export const DEFAULT_MODEL = "claude-sonnet-4.6";
 export const DEFAULT_ASSISTANT_DISPLAY_NAME = "Attache";
 
 let _copilotModel = raw.COPILOT_MODEL || DEFAULT_MODEL;
+let _workerTimeoutMs = parsedWorkerTimeout;
+let _assistantDisplayName = parsedDisplayName;
 
 export const config = {
   telegramBotToken: raw.TELEGRAM_BOT_TOKEN,
   authorizedUserId: parsedUserId,
   apiPort: parsedPort,
-  workerTimeoutMs: parsedWorkerTimeout,
-  assistantDisplayName: parsedDisplayName,
+  get workerTimeoutMs(): number {
+    return _workerTimeoutMs;
+  },
+  set workerTimeoutMs(timeoutMs: number) {
+    _workerTimeoutMs = timeoutMs;
+  },
+  get assistantDisplayName(): string | undefined {
+    return _assistantDisplayName;
+  },
+  set assistantDisplayName(name: string | undefined) {
+    _assistantDisplayName = name?.trim() || undefined;
+  },
   get assistantLabel(): string {
     return this.assistantDisplayName || DEFAULT_ASSISTANT_DISPLAY_NAME;
   },
@@ -158,6 +170,181 @@ export function persistModel(model: string): void {
   persistEnvVar("COPILOT_MODEL", model);
 }
 
+export type ConfigUpdateKey =
+  | "TELEGRAM_BOT_TOKEN"
+  | "AUTHORIZED_USER_ID"
+  | "API_PORT"
+  | "COPILOT_MODEL"
+  | "WORKER_TIMEOUT"
+  | "ASSISTANT_DISPLAY_NAME"
+  | "ATTACHE_WORKFOLDER"
+  | "ATTACHE_BACKEND"
+  | "ANTHROPIC_API_KEY"
+  | "OPENAI_API_KEY";
+
+export interface PreparedConfigUpdate {
+  key: ConfigUpdateKey;
+  persistedValue: string;
+  restartRequired: boolean;
+  apply(): Promise<void> | void;
+}
+
+function normalizeNonEmptyString(value: string, key: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error(`${key} must not be blank`);
+  }
+  return trimmed;
+}
+
+function parseWorkerTimeout(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`WORKER_TIMEOUT must be a positive integer (ms), got: "${value}"`);
+  }
+  return parsed;
+}
+
+/**
+ * Validate a config change before persisting it.
+ *
+ * `restartRequired` is true when the current process cannot safely apply the
+ * change immediately and the caller should restart the daemon after persisting.
+ */
+export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): PreparedConfigUpdate {
+  switch (key) {
+    case "ASSISTANT_DISPLAY_NAME": {
+      const displayName = normalizeNonEmptyString(value, key);
+      return {
+        key,
+        persistedValue: displayName,
+        restartRequired: false,
+        apply: () => {
+          config.assistantDisplayName = displayName;
+        },
+      };
+    }
+
+    case "WORKER_TIMEOUT": {
+      const timeoutMs = parseWorkerTimeout(value);
+      return {
+        key,
+        persistedValue: String(timeoutMs),
+        restartRequired: false,
+        apply: () => {
+          config.workerTimeoutMs = timeoutMs;
+        },
+      };
+    }
+
+    case "COPILOT_MODEL": {
+      const modelId = normalizeNonEmptyString(value, key);
+      return {
+        key,
+        persistedValue: modelId,
+        restartRequired: false,
+        apply: async () => {
+          config.copilotModel = modelId;
+          const { resetForModelSwitch } = await import("./copilot/orchestrator.js");
+          resetForModelSwitch();
+        },
+      };
+    }
+
+    case "AUTHORIZED_USER_ID": {
+      const userId = parseStrictPositiveInteger(value, key);
+      if (userId === undefined) {
+        throw new Error(`${key} must be a positive integer`);
+      }
+      return {
+        key,
+        persistedValue: String(userId),
+        restartRequired: true,
+        apply: () => {},
+      };
+    }
+
+    case "API_PORT": {
+      const apiPort = parseStrictPositiveInteger(value, key);
+      if (apiPort === undefined || apiPort < 1 || apiPort > 65535) {
+        throw new Error(`API_PORT must be 1-65535, got: "${value}"`);
+      }
+      return {
+        key,
+        persistedValue: String(apiPort),
+        restartRequired: true,
+        apply: () => {},
+      };
+    }
+
+    case "ATTACHE_BACKEND": {
+      const backend = normalizeNonEmptyString(value, key);
+      if (!["copilot", "claude", "codex"].includes(backend)) {
+        throw new Error(`Unknown backend '${backend}'. Supported: copilot, claude, codex`);
+      }
+      return {
+        key,
+        persistedValue: backend,
+        restartRequired: true,
+        apply: () => {},
+      };
+    }
+
+    case "ATTACHE_WORKFOLDER": {
+      const workfolder = normalizeNonEmptyString(value, key);
+      return {
+        key,
+        persistedValue: workfolder,
+        restartRequired: true,
+        apply: () => {},
+      };
+    }
+
+    case "TELEGRAM_BOT_TOKEN":
+    case "ANTHROPIC_API_KEY":
+    case "OPENAI_API_KEY": {
+      const persistedValue = normalizeNonEmptyString(value, key);
+      return {
+        key,
+        persistedValue,
+        restartRequired: true,
+        apply: () => {},
+      };
+    }
+  }
+}
+
+export async function persistConfigUpdate(update: PreparedConfigUpdate): Promise<void> {
+  persistEnvVar(update.key, update.persistedValue);
+  await update.apply();
+}
+
+/** Validate and switch model. Returns previous model on success, or an error message. */
+export async function validateAndSwitchModel(
+  modelId: string,
+  client: { capabilities: { modelListing: boolean }; listModels(): Promise<{ id: string; name: string }[]> },
+): Promise<{ ok: true; previous: string } | { ok: false; error: string }> {
+  try {
+    if (client.capabilities.modelListing) {
+      const models = await client.listModels();
+      const match = models.find((m) => m.id === modelId);
+      if (!match) {
+        const suggestions = models
+          .filter((m) => m.id.includes(modelId) || m.id.toLowerCase().includes(modelId.toLowerCase()))
+          .map((m) => m.id);
+        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+        return { ok: false, error: `Model '${modelId}' not found.${hint}` };
+      }
+    }
+  } catch {
+    // If we can't validate (client not ready), allow the switch
+  }
+  const previous = config.copilotModel;
+  config.copilotModel = modelId;
+  persistModel(modelId);
+  return { ok: true, previous };
+}
+
 /** Persist the assistant display name without affecting technical identity. */
 export function persistAssistantDisplayName(name: string): void {
   const trimmed = name.trim();
@@ -165,4 +352,5 @@ export function persistAssistantDisplayName(name: string): void {
     throw new Error("Assistant display name must not be blank");
   }
   persistEnvVar("ASSISTANT_DISPLAY_NAME", trimmed);
+  config.assistantDisplayName = trimmed;
 }

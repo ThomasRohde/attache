@@ -15,6 +15,7 @@ import { spawn, type ChildProcess } from "child_process";
 import { createServer } from "net";
 import { dirname, join } from "path";
 import { createRequire } from "module";
+import WebSocket from "ws";
 
 const require = createRequire(import.meta.url);
 
@@ -237,22 +238,22 @@ export class CodexBackendClient implements BackendClient {
   private connectWebSocket(): Promise<void> {
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(`ws://127.0.0.1:${this.port}`);
-      ws.onopen = () => {
+      ws.once("open", () => {
         this.ws = ws;
         resolve();
-      };
-      ws.onerror = (ev) => {
+      });
+      ws.once("error", () => {
         reject(new Error(`WebSocket connection failed`));
-      };
-      ws.onclose = () => {
+      });
+      ws.on("close", () => {
         if (this.state === "connected") {
           console.log(`${LOG_PREFIX} Codex WebSocket disconnected`);
           this.state = "error";
         }
-      };
-      ws.onmessage = (ev) => {
-        this.handleMessage(String(ev.data));
-      };
+      });
+      ws.on("message", (data) => {
+        this.handleMessage(typeof data === "string" ? data : data.toString());
+      });
     });
   }
 
@@ -360,15 +361,20 @@ function findCodexBinary(): string {
   const pkgDir = dirname(require.resolve(`${pkg}/package.json`));
   const ext = process.platform === "win32" ? ".exe" : "";
 
-  // Walk vendor/ to find the codex binary
-  function find(dir: string): string | undefined {
+  // Walk vendor/ to find the codex binary (depth-limited to avoid runaway recursion)
+  function find(dir: string, depth = 0): string | undefined {
+    if (depth > 5) return undefined;
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry);
-      if (statSync(full).isDirectory()) {
-        const found = find(full);
-        if (found) return found;
-      } else if (entry === `codex${ext}`) {
-        return full;
+      try {
+        if (statSync(full).isDirectory()) {
+          const found = find(full, depth + 1);
+          if (found) return found;
+        } else if (entry === `codex${ext}`) {
+          return full;
+        }
+      } catch {
+        // Skip entries that can't be stat'd (broken symlinks, permission errors)
       }
     }
   }

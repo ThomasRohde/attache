@@ -1,5 +1,5 @@
 import { Bot, type Context } from "grammy";
-import { config, persistModel } from "../config.js";
+import { config, validateAndSwitchModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
 import { searchMemories } from "../store/db.js";
@@ -54,31 +54,14 @@ export function createBot(): Bot {
   bot.command("model", async (ctx) => {
     const arg = ctx.match?.trim();
     if (arg) {
-      // Validate against available models before persisting
-      try {
-        const client = getBackendClient();
-        if (client.capabilities.modelListing) {
-          const models = await client.listModels();
-          const match = models.find((m) => m.id === arg);
-          if (!match) {
-            const suggestions = models
-              .filter((m) => m.id.includes(arg) || m.id.toLowerCase().includes(arg.toLowerCase()))
-              .map((m) => m.id);
-            const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-            await ctx.reply(`Model '${arg}' not found.${hint}`);
-            return;
-          }
-        }
-      } catch {
-        // If validation fails (client not ready), allow the switch — will fail on next message if wrong
+      const result = await validateAndSwitchModel(arg, getBackendClient());
+      if (!result.ok) {
+        await ctx.reply(result.error);
+        return;
       }
-      const previous = config.copilotModel;
-      config.copilotModel = arg;
-      persistModel(arg);
-      // Reset orchestrator session so next message uses the new model
       const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
       resetForModelSwitch();
-      await ctx.reply(`Model: ${previous} → ${arg}`);
+      await ctx.reply(`Model: ${result.previous} → ${arg}`);
     } else {
       await ctx.reply(`Current model: ${config.copilotModel}`);
     }
@@ -172,11 +155,27 @@ export function createBot(): Bot {
     // Broadcast the user's Telegram message to SSE clients
     broadcastTranscriptEntry("user", ctx.message.text, "telegram");
 
+    // Safety timeout — if orchestrator doesn't respond within the worker timeout,
+    // stop the typing indicator and notify the user
+    let responded = false;
+    const safetyTimeout = setTimeout(() => {
+      if (!responded) {
+        responded = true;
+        stopTyping();
+        void ctx.reply("⏳ Response timed out. The orchestrator may be overloaded — try again or use /cancel.", {
+          reply_parameters: replyParams,
+        }).catch(() => {});
+      }
+    }, config.workerTimeoutMs);
+
     sendToOrchestrator(
       ctx.message.text,
       { type: "telegram", chatId, messageId: userMessageId },
       (text: string, done: boolean) => {
         if (done) {
+          if (responded) return; // Safety timeout already fired
+          responded = true;
+          clearTimeout(safetyTimeout);
           stopTyping();
           // Broadcast the assistant response to SSE clients
           broadcastTranscriptEntry("assistant", text, "telegram");

@@ -21,6 +21,7 @@
     <EmbeddedResource Include="icon.ico" LogicalName="AttacheGui.icon.ico" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="HtmlSanitizer" Version="9.*" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebView.WindowsForms" Version="10.0.*" />
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.*" />
     <PackageReference Include="Markdig" Version="0.*" />

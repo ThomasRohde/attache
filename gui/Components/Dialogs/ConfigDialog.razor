@@ -231,6 +231,7 @@
             _saving = false;
         }
 
+        await RefreshStateAsync();
         await OnClose.InvokeAsync();
     }
 
@@ -260,6 +261,30 @@
         "codex" => "Codex SDK",
         _ => name,
     };
+
+    private async Task RefreshStateAsync()
+    {
+        try
+        {
+            var caps = await Api.GetCapabilitiesAsync();
+            if (caps is not null)
+                State.Capabilities = caps;
+
+            var diagnostics = await Api.GetDiagnosticsAsync();
+            if (diagnostics is not null)
+                State.Diagnostics = diagnostics;
+
+            var workfolder = await Api.GetWorkfolderAsync();
+            if (workfolder is not null)
+                State.Workfolder = workfolder;
+
+            State.NotifyStateChanged();
+        }
+        catch
+        {
+            // Best effort: the daemon may be restarting.
+        }
+    }
 
     private async Task Close() => await OnClose.InvokeAsync();
 }

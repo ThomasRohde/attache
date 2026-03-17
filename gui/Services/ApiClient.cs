@@ -10,14 +10,21 @@ public record StatusResult(bool Running, int WorkerCount, string Summary);
 
 public class ApiClient : IDisposable
 {
-    private readonly HttpClient _http;
+    private HttpClient _http;
     private HttpClient? _sseClient;
     private string? _token;
-    private const string BaseUrl = "http://127.0.0.1:7777";
+    private const int DefaultApiPort = 7777;
+    private static readonly TimeSpan PortCacheDuration = TimeSpan.FromSeconds(30);
+
+    private Uri _cachedBaseAddress;
+    private DateTime _lastPortResolution;
 
     private static readonly string TokenPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".attache", "api-token");
+    private static readonly string EnvPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".attache", ".env");
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -26,12 +33,19 @@ public class ApiClient : IDisposable
 
     public ApiClient()
     {
-        _http = new HttpClient
-        {
-            BaseAddress = new Uri(BaseUrl),
-            Timeout = TimeSpan.FromSeconds(5),
-        };
+        _cachedBaseAddress = ResolveBaseAddress();
+        _lastPortResolution = DateTime.UtcNow;
+        _http = CreateHttpClient(_cachedBaseAddress, TimeSpan.FromSeconds(5));
         TryLoadToken();
+    }
+
+    private static HttpClient CreateHttpClient(Uri baseAddress, TimeSpan timeout)
+    {
+        return new HttpClient
+        {
+            BaseAddress = baseAddress,
+            Timeout = timeout,
+        };
     }
 
     private void TryLoadToken()
@@ -43,8 +57,65 @@ public class ApiClient : IDisposable
         _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
     }
 
+    private static Uri ResolveBaseAddress()
+    {
+        var port = DefaultApiPort;
+
+        try
+        {
+            if (File.Exists(EnvPath))
+            {
+                foreach (var line in File.ReadLines(EnvPath))
+                {
+                    if (!line.StartsWith("API_PORT=", StringComparison.Ordinal))
+                        continue;
+
+                    var value = line["API_PORT=".Length..].Trim().Trim('"');
+                    if (int.TryParse(value, out var parsed) && parsed is >= 1 and <= 65535)
+                    {
+                        port = parsed;
+                    }
+                    break;
+                }
+            }
+        }
+        catch
+        {
+            // Fall back to the default port when the env file can't be read.
+        }
+
+        return new Uri($"http://127.0.0.1:{port}");
+    }
+
+    /// <summary>
+    /// Ensure the cached base address is fresh and recreate the HTTP client if the port changed.
+    /// BaseAddress is immutable after the first request, so we must create a new HttpClient.
+    /// </summary>
+    private void RefreshConnection()
+    {
+        TryLoadToken();
+
+        if (DateTime.UtcNow - _lastPortResolution < PortCacheDuration)
+            return;
+
+        var newAddress = ResolveBaseAddress();
+        _lastPortResolution = DateTime.UtcNow;
+
+        if (_cachedBaseAddress.ToString() == newAddress.ToString())
+            return;
+
+        _cachedBaseAddress = newAddress;
+
+        var oldHttp = _http;
+        _http = CreateHttpClient(_cachedBaseAddress, TimeSpan.FromSeconds(5));
+        if (_token is not null)
+            _http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", _token);
+        oldHttp.Dispose();
+    }
+
     public async Task<StatusResult> GetStatusAsync()
     {
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/status");
@@ -62,7 +133,7 @@ public class ApiClient : IDisposable
 
     public async Task<List<TranscriptRow>> GetTranscriptAsync(int limit = 50)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync($"/transcript?limit={limit}");
@@ -73,7 +144,7 @@ public class ApiClient : IDisposable
 
     public async Task<List<WorkerModel>> GetSessionsAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/sessions");
@@ -84,7 +155,7 @@ public class ApiClient : IDisposable
 
     public async Task<DiagnosticsModel?> GetDiagnosticsAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/diagnostics");
@@ -95,7 +166,7 @@ public class ApiClient : IDisposable
 
     public async Task<ConfigModel?> GetConfigAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/config/effective");
@@ -106,7 +177,7 @@ public class ApiClient : IDisposable
 
     public async Task<CapabilitiesModel?> GetCapabilitiesAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/capabilities");
@@ -117,7 +188,7 @@ public class ApiClient : IDisposable
 
     public async Task<List<ModelInfo>> GetModelsAsync(string? provider = null)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var url = provider is not null ? $"/models?provider={Uri.EscapeDataString(provider)}" : "/models";
@@ -129,7 +200,7 @@ public class ApiClient : IDisposable
 
     public async Task<string?> GetWorkerLogsAsync(string workerId)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync($"/workers/{Uri.EscapeDataString(workerId)}/logs?tail=500");
@@ -141,7 +212,7 @@ public class ApiClient : IDisposable
 
     public async Task<string?> GetModelAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/model");
@@ -153,7 +224,7 @@ public class ApiClient : IDisposable
 
     public async Task<bool> PostModelAsync(string model)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var body = JsonSerializer.Serialize(new { model });
@@ -166,7 +237,7 @@ public class ApiClient : IDisposable
 
     public async Task<string?> GetBackendAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/backend");
@@ -178,7 +249,7 @@ public class ApiClient : IDisposable
 
     public async Task<bool> PostBackendAsync(string name)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var body = JsonSerializer.Serialize(new { name });
@@ -191,7 +262,7 @@ public class ApiClient : IDisposable
 
     public async Task<WorkfolderInfo?> GetWorkfolderAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var json = await _http.GetStringAsync("/workfolder");
@@ -202,7 +273,7 @@ public class ApiClient : IDisposable
 
     public async Task<bool> PostWorkfolderAsync(string path)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var body = JsonSerializer.Serialize(new { path });
@@ -215,7 +286,7 @@ public class ApiClient : IDisposable
 
     public async Task<bool> PostConfigAsync(Dictionary<string, string> values)
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var body = JsonSerializer.Serialize(values);
@@ -228,11 +299,10 @@ public class ApiClient : IDisposable
 
     public async Task<(string connectionId, StreamReader reader)> OpenSseConnectionAsync(CancellationToken ct)
     {
-        TryLoadToken();
+        RefreshConnection();
 
         _sseClient?.Dispose();
-        _sseClient = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
-        _sseClient.BaseAddress = new Uri(BaseUrl);
+        _sseClient = CreateHttpClient(_cachedBaseAddress, Timeout.InfiniteTimeSpan);
         if (_token is not null)
             _sseClient.DefaultRequestHeaders.Authorization =
                 new AuthenticationHeaderValue("Bearer", _token);
@@ -274,7 +344,7 @@ public class ApiClient : IDisposable
 
     public async Task<bool> SendMessageAsync(string prompt, string connectionId)
     {
-        TryLoadToken();
+        RefreshConnection();
         var body = JsonSerializer.Serialize(new { prompt, connectionId });
         using var content = new StringContent(body, Encoding.UTF8, "application/json");
         var resp = await _http.PostAsync("/message", content);
@@ -283,7 +353,7 @@ public class ApiClient : IDisposable
 
     public async Task<bool> PostCancelAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         try
         {
             var resp = await _http.PostAsync("/cancel", null);
@@ -294,7 +364,7 @@ public class ApiClient : IDisposable
 
     public async Task PostRestartAsync()
     {
-        TryLoadToken();
+        RefreshConnection();
         using var req = new HttpRequestMessage(HttpMethod.Post, "/restart");
         await _http.SendAsync(req);
     }

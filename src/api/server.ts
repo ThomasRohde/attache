@@ -5,7 +5,7 @@ import { randomBytes } from "crypto";
 import { execSync } from "child_process";
 import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
-import { config, persistModel, persistEnvVar } from "../config.js";
+import { config, persistEnvVar, prepareConfigUpdate, persistConfigUpdate, validateAndSwitchModel } from "../config.js";
 import { getDb, searchMemories, logConversation, addMemory, removeMemory } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
@@ -16,6 +16,7 @@ import { homedir } from "os";
 import { TOOL_REGISTRY, BLOCKED_WORKER_DIRS, MAX_CONCURRENT_WORKERS, type WorkerInfo } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
 import { getBackendClient, getBackendName, getStaticModels } from "../backend/registry.js";
+import { getCurrentSourceChannel } from "../copilot/orchestrator.js";
 import {
   API_EVENT_SCHEMA_VERSION,
   createCancelledEvent,
@@ -234,6 +235,7 @@ app.post("/workers", async (req: Request, res: Response) => {
       session,
       workingDir,
       status: "idle",
+      originChannel: getCurrentSourceChannel(),
     };
     workers.set(name, worker);
 
@@ -301,6 +303,7 @@ app.post("/workers/:id/prompt", async (req: Request, res: Response) => {
 
   worker.status = "running";
   worker.startedAt = Date.now();
+  worker.originChannel ??= getCurrentSourceChannel();
   const db = getDb();
   db.prepare(
     `UPDATE worker_sessions SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE name = ?`,
@@ -419,30 +422,13 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       if (!args) {
         return { handled: true, result: `Current model: ${config.copilotModel}` };
       }
-      // Validate and switch model
-      try {
-        const client = getBackendClient();
-        if (client.capabilities.modelListing) {
-          const models = await client.listModels();
-          const match = models.find((m) => m.id === args);
-          if (!match) {
-            const suggestions = models
-              .filter((m) => m.id.includes(args) || m.id.toLowerCase().includes(args.toLowerCase()))
-              .map((m) => m.id);
-            const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-            return { handled: true, result: `Model '${args}' not found.${hint}` };
-          }
-        }
-      } catch {
-        // Can't validate — allow the switch
+      const switchResult = await validateAndSwitchModel(args, getBackendClient());
+      if (!switchResult.ok) {
+        return { handled: true, result: switchResult.error };
       }
-      const previous = config.copilotModel;
-      config.copilotModel = args;
-      persistModel(args);
-      // Reset orchestrator session so next message uses the new model
       const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
       resetForModelSwitch();
-      return { handled: true, result: `Switched model from ${previous} to ${args}` };
+      return { handled: true, result: `Switched model from ${switchResult.previous} to ${args}` };
     }
 
     case "/provider": {
@@ -509,18 +495,18 @@ app.post("/message", (req: Request, res: Response) => {
   const trimmedPrompt = prompt.trim();
   if (trimmedPrompt.startsWith("/")) {
     handleBuiltInCommand(trimmedPrompt).then((builtIn) => {
-      if (builtIn.handled) {
-        const sseRes = sseClients.get(connectionId);
-        if (sseRes) {
-          sseRes.write(encodeSseEvent(createCompleteEvent(builtIn.result!)));
+        if (builtIn.handled) {
+          const sseRes = sseClients.get(connectionId);
+          if (sseRes) {
+            sseRes.write(encodeSseEvent(createCompleteEvent(builtIn.result!)));
+          }
+          logConversation("user", trimmedPrompt, "tui");
+          logConversation("assistant", builtIn.result!, "tui");
+          broadcastTranscriptEntry("user", trimmedPrompt, "tui", connectionId);
+          broadcastTranscriptEntry("assistant", builtIn.result!, "tui", connectionId);
+          res.json({ status: "executed", builtIn: true });
+          return;
         }
-        logConversation("user", trimmedPrompt, "tui");
-        logConversation("assistant", builtIn.result!, "tui");
-        broadcastTranscriptEntry("user", trimmedPrompt, "tui");
-        broadcastTranscriptEntry("assistant", builtIn.result!, "tui");
-        res.json({ status: "executed", builtIn: true });
-        return;
-      }
       // Not a built-in command — pass through to orchestrator
       dispatchToOrchestrator(prompt, connectionId, res);
     }).catch(() => {
@@ -533,16 +519,18 @@ app.post("/message", (req: Request, res: Response) => {
 });
 
 function dispatchToOrchestrator(prompt: string, connectionId: string, res: Response) {
+  broadcastTranscriptEntry("user", prompt, "tui", connectionId);
+
   sendToOrchestrator(
     prompt,
     { type: "tui", connectionId },
     (text: string, done: boolean) => {
       if (done) {
-        // Broadcast complete event to ALL SSE clients
-        const event = createCompleteEvent(text);
-        for (const [, sseRes] of sseClients) {
-          sseRes.write(encodeSseEvent(event));
+        const sseRes = sseClients.get(connectionId);
+        if (sseRes) {
+          sseRes.write(encodeSseEvent(createCompleteEvent(text)));
         }
+        broadcastTranscriptEntry("assistant", text, "tui", connectionId);
       } else {
         // Send deltas only to the originating connection
         const sseRes = sseClients.get(connectionId);
@@ -600,31 +588,14 @@ app.post("/model", async (req: Request, res: Response) => {
     res.status(400).json({ error: "Missing 'model' in request body" });
     return;
   }
-  // Validate against available models before persisting
-  try {
-    const client = getBackendClient();
-    if (client.capabilities.modelListing) {
-      const models = await client.listModels();
-      const match = models.find((m) => m.id === model);
-      if (!match) {
-        const suggestions = models
-          .filter((m) => m.id.includes(model) || m.id.toLowerCase().includes(model.toLowerCase()))
-          .map((m) => m.id);
-        const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
-        res.status(400).json({ error: `Model '${model}' not found.${hint}` });
-        return;
-      }
-    }
-  } catch {
-    // If we can't validate (client not ready), allow the switch — it'll fail on next message if wrong
+  const switchResult = await validateAndSwitchModel(model, getBackendClient());
+  if (!switchResult.ok) {
+    res.status(400).json({ error: switchResult.error });
+    return;
   }
-  const previous = config.copilotModel;
-  config.copilotModel = model;
-  persistModel(model);
-  // Reset orchestrator session so next message uses the new model
   const { resetForModelSwitch } = await import("../copilot/orchestrator.js");
   resetForModelSwitch();
-  res.json({ previous, current: model });
+  res.json({ previous: switchResult.previous, current: model });
 });
 
 // Get current backend provider
@@ -679,12 +650,17 @@ app.post("/memory", (req: Request, res: Response) => {
     return;
   }
   const memSource = source === "auto" ? "auto" : "user";
-  const id = addMemory(
-    category as "preference" | "fact" | "project" | "person" | "routine",
-    content,
-    memSource,
-  );
-  res.json({ id, category, content, source: memSource });
+  try {
+    const id = addMemory(
+      category as "preference" | "fact" | "project" | "person" | "routine",
+      content,
+      memSource,
+    );
+    res.json({ id, category, content, source: memSource });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ error: msg });
+  }
 });
 
 // Remove a memory by ID (for Claude backend — agent calls via curl)
@@ -820,7 +796,7 @@ app.post("/workfolder", (req: Request, res: Response) => {
 });
 
 // Update .env config values
-app.post("/config", (req: Request, res: Response) => {
+app.post("/config", async (req: Request, res: Response) => {
   const values = req.body as Record<string, string>;
   if (!values || typeof values !== "object") {
     res.status(400).json({ error: "Body must be a JSON object of key-value pairs" });
@@ -831,6 +807,7 @@ app.post("/config", (req: Request, res: Response) => {
   const allowedKeys = new Set([
     "TELEGRAM_BOT_TOKEN",
     "AUTHORIZED_USER_ID",
+    "API_PORT",
     "COPILOT_MODEL",
     "WORKER_TIMEOUT",
     "ASSISTANT_DISPLAY_NAME",
@@ -840,7 +817,7 @@ app.post("/config", (req: Request, res: Response) => {
     "OPENAI_API_KEY",
   ]);
 
-  let restartRequired = false;
+  const updates = [];
   for (const [key, value] of Object.entries(values)) {
     if (!allowedKeys.has(key)) {
       res.status(400).json({ error: `Key '${key}' is not a configurable setting` });
@@ -850,11 +827,19 @@ app.post("/config", (req: Request, res: Response) => {
       res.status(400).json({ error: `Value for '${key}' must be a string` });
       return;
     }
-    persistEnvVar(key, value);
-    // Telegram settings and workfolder require restart
-    if (["TELEGRAM_BOT_TOKEN", "AUTHORIZED_USER_ID", "ATTACHE_WORKFOLDER", "ATTACHE_BACKEND"].includes(key)) {
-      restartRequired = true;
+    try {
+      updates.push(prepareConfigUpdate(key as Parameters<typeof prepareConfigUpdate>[0], value));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+      return;
     }
+  }
+
+  let restartRequired = false;
+  for (const update of updates) {
+    await persistConfigUpdate(update);
+    restartRequired = restartRequired || update.restartRequired;
   }
 
   res.json({ status: "ok", restartRequired });
@@ -877,6 +862,26 @@ app.post("/send-photo", async (req: Request, res: Response) => {
   if (!photo || typeof photo !== "string") {
     res.status(400).json({ error: "Missing 'photo' (file path or URL) in request body" });
     return;
+  }
+
+  // URLs are fine — only validate local file paths
+  if (!photo.startsWith("http://") && !photo.startsWith("https://")) {
+    const resolvedPhoto = resolve(photo);
+    const home = homedir();
+    // Block sensitive directories
+    for (const blocked of BLOCKED_WORKER_DIRS) {
+      const blockedPath = join(home, blocked);
+      if (resolvedPhoto === blockedPath || resolvedPhoto.startsWith(blockedPath + sep)) {
+        res.status(403).json({ error: `Refused: photo path is in a sensitive directory (${blocked}).` });
+        return;
+      }
+    }
+    // Block Attache's own config directory (contains API keys, tokens)
+    const attacheHome = join(home, ".attache");
+    if (resolvedPhoto.startsWith(attacheHome + sep) || resolvedPhoto === attacheHome) {
+      res.status(403).json({ error: "Refused: photo path is in the Attache config directory." });
+      return;
+    }
   }
 
   try {
@@ -912,9 +917,17 @@ export function broadcastToSSE(text: string): void {
 }
 
 /** Broadcast a transcript entry to all SSE clients (for cross-channel visibility). */
-export function broadcastTranscriptEntry(role: string, content: string, source: string): void {
+export function broadcastTranscriptEntry(
+  role: string,
+  content: string,
+  source: string,
+  excludeConnectionId?: string,
+): void {
   const event = createTranscriptEvent(role, content, source);
-  for (const [, res] of sseClients) {
+  for (const [connectionId, res] of sseClients) {
+    if (excludeConnectionId && connectionId === excludeConnectionId) {
+      continue;
+    }
     res.write(encodeSseEvent(event));
   }
 }

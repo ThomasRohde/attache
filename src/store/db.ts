@@ -144,12 +144,17 @@ export function getRecentConversation(limit = 20): string {
   }).join("\n\n");
 }
 
+const MAX_MEMORY_CONTENT_LENGTH = 10_000;
+
 /** Add a memory to long-term storage. */
 export function addMemory(
   category: "preference" | "fact" | "project" | "person" | "routine",
   content: string,
   source: "user" | "auto" = "user"
 ): number {
+  if (content.length > MAX_MEMORY_CONTENT_LENGTH) {
+    throw new Error(`Memory content too long (${content.length} chars, max ${MAX_MEMORY_CONTENT_LENGTH})`);
+  }
   const db = getDb();
   const result = db.prepare(
     `INSERT INTO memories (category, content, source) VALUES (?, ?, ?)`
@@ -216,7 +221,11 @@ export function getMemorySummary(): string {
   }
 
   const sections = Object.entries(grouped).map(([cat, items]) => {
-    const lines = items.map((i) => `  - [#${i.id}] ${i.content}`).join("\n");
+    const lines = items.map((i) => {
+      // Truncate long entries to prevent system message bloat
+      const content = i.content.length > 500 ? i.content.slice(0, 500) + "…" : i.content;
+      return `  - [#${i.id}] ${content}`;
+    }).join("\n");
     return `**${cat}**:\n${lines}`;
   });
 

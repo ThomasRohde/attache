@@ -210,6 +210,8 @@ async function createOrResumeSession(): Promise<BackendSession> {
     systemMessage: getOrchestratorSystemMessage(memorySummary || undefined, {
       selfEditEnabled: config.selfEditEnabled,
       assistantDisplayName: config.assistantLabel,
+      backendName: backendClient!.name,
+      apiPort: config.apiPort,
     }),
     tools: client.capabilities.customTools ? tools : undefined,
     mcpServers,
@@ -378,7 +380,7 @@ async function processQueue(): Promise<void> {
 
 function isRecoverableError(err: unknown): boolean {
   const msg = err instanceof Error ? err.message : String(err);
-  return /timeout|disconnect|connection|EPIPE|ECONNRESET|ECONNREFUSED|socket|closed|ENOENT|spawn|not found|no conversation found|expired|stale/i.test(msg);
+  return /timeout|disconnect|connection refused|connection reset|connection closed|connection error|EPIPE|ECONNRESET|ECONNREFUSED|ENOENT|socket hang up|socket closed|channel closed|spawn.*not found|no conversation found|session expired|session not found|stale/i.test(msg);
 }
 
 export async function sendToOrchestrator(
