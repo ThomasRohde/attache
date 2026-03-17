@@ -19,8 +19,15 @@ public class AppState
     public string? StreamingContent { get; set; }
     public WorkfolderInfo? Workfolder { get; set; }
     public CapabilitiesModel? Capabilities { get; set; }
+    public List<SkillInfo> Skills { get; set; } = [];
+    public List<SkillStats> SkillStats { get; set; } = [];
     public bool IsProcessing { get; set; }
     public string? WorkerLogs { get; set; }
+
+    // Channel tabs
+    public string SelectedChannel { get; set; } = "tui";
+    public HashSet<string> KnownChannels { get; } = new() { "tui" };
+    public HashSet<string> UnreadChannels { get; } = new();
 
     /// <summary>True when viewing orchestrator transcript, false when viewing a worker's logs.</summary>
     public bool ViewingOrchestrator => SelectedWorkerId is null;
@@ -74,11 +81,28 @@ public class AppState
         NotifyStateChanged();
     }
 
+    public void SelectChannel(string source)
+    {
+        SelectedChannel = source;
+        UnreadChannels.Remove(source);
+        NotifyStateChanged();
+    }
+
+    public void RecordChannelActivity(string source)
+    {
+        if (string.IsNullOrEmpty(source)) return;
+        KnownChannels.Add(source);
+        if (source != SelectedChannel)
+            UnreadChannels.Add(source);
+        NotifyStateChanged();
+    }
+
     public void ClearTranscript()
     {
         TranscriptEntries.Clear();
         StreamingContent = null;
         IsProcessing = false;
+        UnreadChannels.Clear();
         NotifyStateChanged();
     }
 }

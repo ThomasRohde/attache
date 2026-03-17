@@ -72,6 +72,7 @@
         await PollAsync();
         await FetchWorkfolderAsync();
         await FetchCapabilitiesAsync();
+        await FetchSkillsAsync();
     }
 
     private async Task LoadTranscriptHistoryAsync()
@@ -84,13 +85,15 @@
                 if (row.Role == "system") continue; // skip system/background entries
 
                 DateTime.TryParse(row.Ts, out var ts);
+                var source = string.IsNullOrEmpty(row.Source) ? "tui" : row.Source;
                 State.TranscriptEntries.Add(new TranscriptEntry
                 {
                     Role = row.Role,
                     Content = row.Content,
-                    Source = row.Source,
+                    Source = source,
                     Timestamp = ts != default ? ts.ToLocalTime() : DateTime.Now,
                 });
+                State.KnownChannels.Add(source);
             }
             State.NotifyStateChanged();
         }
@@ -127,6 +130,21 @@
         {
             var caps = await Api.GetCapabilitiesAsync();
             State.Capabilities = caps;
+            if (caps?.Features?.Telegram == true)
+                State.KnownChannels.Add("telegram");
+            State.NotifyStateChanged();
+        }
+        catch { }
+    }
+
+    private async Task FetchSkillsAsync()
+    {
+        try
+        {
+            var skills = await Api.GetSkillsAsync();
+            var stats = await Api.GetSkillStatsAsync();
+            State.Skills = skills;
+            State.SkillStats = stats;
             State.NotifyStateChanged();
         }
         catch { }
@@ -141,6 +159,7 @@
         {
             await FetchWorkfolderAsync();
             await FetchCapabilitiesAsync();
+            await FetchSkillsAsync();
             StateHasChanged();
         });
     }
@@ -148,12 +167,14 @@
     private void OnDelta(string content)
     {
         State.UpdateStreamingContent(content);
+        State.RecordChannelActivity("tui");
         InvokeAsync(StateHasChanged);
     }
 
     private void OnMessageComplete(string content, RouteInfo? route)
     {
         State.FinalizeAssistantMessage(content, route);
+        State.RecordChannelActivity("tui");
         InvokeAsync(StateHasChanged);
     }
 
@@ -179,7 +200,7 @@
             Source = source,
             Timestamp = DateTime.Now,
         });
-        State.NotifyStateChanged();
+        State.RecordChannelActivity(source);
         InvokeAsync(StateHasChanged);
     }
 

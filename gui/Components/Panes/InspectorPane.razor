@@ -109,6 +109,54 @@
             <div class="empty-state">Waiting for daemon...</div>
         }
 
+        @if (State.Skills.Count > 0)
+        {
+            <div class="inspector-section">
+                <h3>Skills</h3>
+                @foreach (var skill in State.Skills)
+                {
+                    var stats = State.SkillStats.Find(s => s.Slug == skill.Slug);
+                    <div class="skill-item" @onclick="() => ToggleSkill(skill.Slug)">
+                        <div class="skill-header">
+                            <span class="skill-name">@skill.Name</span>
+                            <span class="source-badge source-@skill.Source">@skill.Source</span>
+                        </div>
+                        @if (_expandedSkill == skill.Slug)
+                        {
+                            <div class="skill-detail">
+                                <div class="skill-description">@skill.Description</div>
+                                @if (stats is not null && stats.Total > 0)
+                                {
+                                    <div class="skill-stats">
+                                        <span class="stat">
+                                            <span class="stat-value">@stats.Total</span> uses
+                                        </span>
+                                        <span class="stat">
+                                            <span class="stat-value stat-success">@stats.Successes</span>
+                                            <span class="stat-sep">/</span>
+                                            <span class="stat-value stat-failure">@stats.Failures</span>
+                                            <span class="stat-sep">/</span>
+                                            <span class="stat-value stat-partial">@stats.Partials</span>
+                                        </span>
+                                        @if (stats.LastUsed is not null)
+                                        {
+                                            <span class="stat">@FormatLastUsed(stats.LastUsed)</span>
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="skill-stats">
+                                        <span class="stat" style="color: var(--text-muted);">never used</span>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+
         @if (State.SelectedWorker is not null)
         {
             <div class="inspector-section">
@@ -141,6 +189,8 @@
 </div>
 
 @code {
+    private string? _expandedSkill;
+
     protected override void OnInitialized()
     {
         State.OnStateChanged += HandleStateChanged;
@@ -171,6 +221,22 @@
         if (bytes < 1024) return $"{bytes} B";
         if (bytes < 1024 * 1024) return $"{bytes / 1024} KB";
         return $"{bytes / (1024 * 1024)} MB";
+    }
+
+    private void ToggleSkill(string slug)
+    {
+        _expandedSkill = _expandedSkill == slug ? null : slug;
+    }
+
+    private string FormatLastUsed(string isoDate)
+    {
+        if (!DateTime.TryParse(isoDate, out var dt))
+            return isoDate;
+        var ago = DateTime.UtcNow - dt.ToUniversalTime();
+        if (ago.TotalMinutes < 1) return "just now";
+        if (ago.TotalHours < 1) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalDays < 1) return $"{(int)ago.TotalHours}h ago";
+        return $"{(int)ago.TotalDays}d ago";
     }
 
     private string FormatElapsed(long ms)

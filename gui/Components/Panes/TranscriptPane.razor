@@ -4,16 +4,30 @@
 @implements IDisposable
 
 <div class="pane">
-    <div class="pane-header">
-        @if (State.ViewingOrchestrator)
-        {
-            <span>Transcript</span>
-        }
-        else
-        {
+    @if (State.ViewingOrchestrator)
+    {
+        <div class="pane-header channel-tabs">
+            @foreach (var channel in State.KnownChannels.OrderBy(ChannelOrder))
+            {
+                var isSelected = channel == State.SelectedChannel;
+                var isUnread = State.UnreadChannels.Contains(channel);
+                <button class="channel-tab @(isSelected ? "active" : "") @(isUnread ? "unread" : "")"
+                        @onclick="() => State.SelectChannel(channel)">
+                    @ChannelLabel(channel)
+                    @if (isUnread)
+                    {
+                        <span class="unread-dot"></span>
+                    }
+                </button>
+            }
+        </div>
+    }
+    else
+    {
+        <div class="pane-header">
             <span>Worker: @(State.SelectedWorker?.Name ?? State.SelectedWorkerId)</span>
-        }
-    </div>
+        </div>
+    }
     <div class="pane-body transcript-body" id="transcript-scroll">
         @if (State.ViewingOrchestrator)
         {

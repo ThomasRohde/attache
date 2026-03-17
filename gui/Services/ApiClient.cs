@@ -362,6 +362,28 @@ public class ApiClient : IDisposable
         catch { return false; }
     }
 
+    public async Task<List<SkillInfo>> GetSkillsAsync()
+    {
+        RefreshConnection();
+        try
+        {
+            var json = await _http.GetStringAsync("/skills");
+            return JsonSerializer.Deserialize<List<SkillInfo>>(json, JsonOpts) ?? [];
+        }
+        catch { return []; }
+    }
+
+    public async Task<List<SkillStats>> GetSkillStatsAsync()
+    {
+        RefreshConnection();
+        try
+        {
+            var json = await _http.GetStringAsync("/skills/stats");
+            return JsonSerializer.Deserialize<List<SkillStats>>(json, JsonOpts) ?? [];
+        }
+        catch { return []; }
+    }
+
     public async Task PostRestartAsync()
     {
         RefreshConnection();
