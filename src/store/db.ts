@@ -122,6 +122,12 @@ export function logConversation(role: "user" | "assistant" | "system", content: 
   }
 }
 
+/** Delete all rows from conversation_log. */
+export function clearConversationLog(): void {
+  const db = getDb();
+  db.prepare(`DELETE FROM conversation_log`).run();
+}
+
 /** Get recent conversation history formatted for injection into system message. */
 export function getRecentConversation(limit = 20): string {
   const db = getDb();

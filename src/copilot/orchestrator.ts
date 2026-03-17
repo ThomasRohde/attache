@@ -53,6 +53,19 @@ export function resetForModelSwitch(): void {
   deleteState(ORCHESTRATOR_SESSION_KEY);
 }
 
+/** Reset the orchestrator session for a /clear command. Destroys the current session if alive. */
+export async function resetSession(): Promise<void> {
+  if (orchestratorSession) {
+    try {
+      await orchestratorSession.destroy();
+    } catch {
+      // Best effort — the session may already be gone
+    }
+  }
+  orchestratorSession = undefined;
+  deleteState(ORCHESTRATOR_SESSION_KEY);
+}
+
 // Persistent orchestrator session
 let orchestratorSession: BackendSession | undefined;
 // Coalesces concurrent ensureOrchestratorSession calls

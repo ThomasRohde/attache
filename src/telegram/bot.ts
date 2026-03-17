@@ -1,8 +1,8 @@
 import { Bot, type Context } from "grammy";
 import { config, validateAndSwitchModel } from "../config.js";
-import { sendToOrchestrator, cancelCurrentMessage, getWorkers } from "../copilot/orchestrator.js";
+import { sendToOrchestrator, cancelCurrentMessage, getWorkers, resetSession } from "../copilot/orchestrator.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
-import { searchMemories } from "../store/db.js";
+import { searchMemories, clearConversationLog } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
@@ -37,6 +37,8 @@ export function createBot(): Bot {
         "Just send me a message and I'll handle it.\n\n" +
         "Commands:\n" +
         "/cancel — Cancel the current message\n" +
+        "/clear — Clear conversation and start fresh\n" +
+        "/new — Same as /clear\n" +
         "/model — Show current model\n" +
         "/model <name> — Switch model\n" +
         "/provider — Show or switch backend provider\n" +
@@ -120,6 +122,16 @@ export function createBot(): Bot {
       await ctx.reply(lines.join("\n"));
     }
   });
+  const handleClearCommand = async (ctx: Context) => {
+    await resetSession();
+    clearConversationLog();
+    const { broadcastClearedEvent } = await import("../api/server.js");
+    broadcastClearedEvent();
+    await ctx.reply("Session cleared. Starting fresh.");
+  };
+  bot.command("clear", handleClearCommand);
+  bot.command("new", handleClearCommand);
+
   bot.command("restart", async (ctx) => {
     await ctx.reply(`⏳ Restarting ${identity.assistantDisplayName}...`);
     setTimeout(() => {

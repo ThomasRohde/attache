@@ -73,6 +73,14 @@ public class AppState
         IsProcessing = false;
         NotifyStateChanged();
     }
+
+    public void ClearTranscript()
+    {
+        TranscriptEntries.Clear();
+        StreamingContent = null;
+        IsProcessing = false;
+        NotifyStateChanged();
+    }
 }
 
 public enum ConnectionState

@@ -19,6 +19,7 @@ public class SseService : IDisposable
     public event Action<string, RouteInfo?>? MessageComplete;
     public event Action? Cancelled;
     public event Action<string, string, string>? TranscriptEntry; // role, content, source
+    public event Action? SessionCleared;
     public event Action<string>? Disconnected;
     public event Action<string>? Error;
 
@@ -122,6 +123,10 @@ public class SseService : IDisposable
 
                         case "cancelled":
                             Cancelled?.Invoke();
+                            break;
+
+                        case "cleared":
+                            SessionCleared?.Invoke();
                             break;
                     }
                 }

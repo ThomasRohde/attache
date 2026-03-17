@@ -5,9 +5,10 @@ export type ApiEventName =
   | "orchestrator.message.delta"
   | "orchestrator.message.complete"
   | "orchestrator.message.cancelled"
-  | "transcript.entry";
+  | "transcript.entry"
+  | "session.cleared";
 
-export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript";
+export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript" | "cleared";
 
 type ConnectedData = { connectionId: string };
 type MessageData = { content: string };
@@ -55,6 +56,10 @@ export function createCompleteEvent(
 
 export function createCancelledEvent(): ApiEventEnvelope<EmptyData> {
   return withEnvelope("orchestrator.message.cancelled", "cancelled", {});
+}
+
+export function createClearedEvent(): ApiEventEnvelope<EmptyData> {
+  return withEnvelope("session.cleared", "cleared", {});
 }
 
 export function createTranscriptEvent(role: string, content: string, source: string): ApiEventEnvelope<TranscriptData> {

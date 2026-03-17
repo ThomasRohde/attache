@@ -3,10 +3,10 @@ import type { Request, Response, NextFunction } from "express";
 import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
 import { randomBytes } from "crypto";
 import { execSync } from "child_process";
-import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult } from "../copilot/orchestrator.js";
+import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult, resetSession } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistEnvVar, prepareConfigUpdate, persistConfigUpdate, validateAndSwitchModel } from "../config.js";
-import { getDb, searchMemories, logConversation, addMemory, removeMemory } from "../store/db.js";
+import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearConversationLog } from "../store/db.js";
 import { listSkills, removeSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
@@ -23,6 +23,7 @@ import {
   createCompleteEvent,
   createConnectedEvent,
   createDeltaEvent,
+  createClearedEvent,
   createTranscriptEvent,
   encodeSseEvent,
 } from "./events.js";
@@ -472,6 +473,15 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
       return { handled: true, result: "Restarting..." };
     }
 
+    case "/clear":
+    case "/new": {
+      await cancelCurrentMessage();
+      await resetSession();
+      clearConversationLog();
+      broadcastClearedEvent();
+      return { handled: true, result: "Session cleared. Starting fresh." };
+    }
+
     default:
       return { handled: false };
   }
@@ -711,6 +721,8 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     { command: "/model", name: "Switch model", description: "Show or switch the active model", type: "builtIn", usage: "/model [name]" },
     { command: "/provider", name: "Provider", description: "Show or switch the backend provider", type: "builtIn", usage: "/provider [copilot|claude|codex]" },
     { command: "/workers", name: "List workers", description: "Show active worker sessions", type: "builtIn" },
+    { command: "/clear", name: "Clear", description: "Clear conversation and start a new session", type: "builtIn" },
+    { command: "/new", name: "New session", description: "Clear conversation and start a new session", type: "builtIn" },
     { command: "/restart", name: "Restart", description: "Restart the daemon", type: "builtIn" },
   ];
 
@@ -913,6 +925,13 @@ export function startApiServer(): Promise<void> {
 export function broadcastToSSE(text: string): void {
   for (const [, res] of sseClients) {
     res.write(encodeSseEvent(createCompleteEvent(text)));
+  }
+}
+
+/** Broadcast a session-cleared event to all connected SSE clients. */
+export function broadcastClearedEvent(): void {
+  for (const [, res] of sseClients) {
+    res.write(encodeSseEvent(createClearedEvent()));
   }
 }
 

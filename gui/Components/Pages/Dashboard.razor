@@ -52,6 +52,7 @@
         Sse.MessageComplete += OnMessageComplete;
         Sse.Cancelled += OnCancelled;
         Sse.TranscriptEntry += OnTranscriptEntry;
+        Sse.SessionCleared += OnSessionCleared;
         Sse.Disconnected += OnDisconnected;
 
         // Load conversation history from database
@@ -162,6 +163,12 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private void OnSessionCleared()
+    {
+        State.ClearTranscript();
+        InvokeAsync(StateHasChanged);
+    }
+
     private void OnTranscriptEntry(string role, string content, string source)
     {
         // Cross-channel message (e.g. from Telegram)
@@ -208,6 +215,7 @@
         Sse.MessageComplete -= OnMessageComplete;
         Sse.Cancelled -= OnCancelled;
         Sse.TranscriptEntry -= OnTranscriptEntry;
+        Sse.SessionCleared -= OnSessionCleared;
         Sse.Disconnected -= OnDisconnected;
     }
 }
