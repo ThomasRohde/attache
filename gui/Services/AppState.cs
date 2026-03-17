@@ -79,6 +79,18 @@ public class AppState
         NotifyStateChanged();
     }
 
+    public void AddTranscriptEntry(string role, string content, string source)
+    {
+        TranscriptEntries.Add(new TranscriptEntry
+        {
+            Role = role,
+            Content = content,
+            Source = source,
+            Timestamp = DateTime.Now,
+        });
+        NotifyStateChanged();
+    }
+
     public void HandleCancelled()
     {
         StreamingContent = null;

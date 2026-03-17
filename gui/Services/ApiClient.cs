@@ -284,7 +284,7 @@ public class ApiClient : IDisposable
         catch { return false; }
     }
 
-    public async Task<bool> PostConfigAsync(Dictionary<string, string> values)
+    public async Task<(bool success, bool restartRequired)> PostConfigAsync(Dictionary<string, string> values)
     {
         RefreshConnection();
         try
@@ -292,9 +292,15 @@ public class ApiClient : IDisposable
             var body = JsonSerializer.Serialize(values);
             using var content = new StringContent(body, Encoding.UTF8, "application/json");
             var resp = await _http.PostAsync("/config", content);
-            return resp.IsSuccessStatusCode;
+            if (!resp.IsSuccessStatusCode)
+                return (false, false);
+
+            var json = await resp.Content.ReadAsStringAsync();
+            using var doc = JsonDocument.Parse(json);
+            var restartRequired = doc.RootElement.TryGetProperty("restartRequired", out var rr) && rr.GetBoolean();
+            return (true, restartRequired);
         }
-        catch { return false; }
+        catch { return (false, false); }
     }
 
     public async Task<(string connectionId, StreamReader reader)> OpenSseConnectionAsync(CancellationToken ct)

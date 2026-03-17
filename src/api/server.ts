@@ -21,6 +21,7 @@ import {
   API_EVENT_SCHEMA_VERSION,
   createCancelledEvent,
   createCompleteEvent,
+  createBackgroundCompleteEvent,
   createConnectedEvent,
   createDeltaEvent,
   createClearedEvent,
@@ -259,19 +260,18 @@ app.post("/workers", async (req: Request, res: Response) => {
       session.sendAndWait(`Working directory: ${workingDir}\n\n${initial_prompt}`, timeoutMs)
         .then((result) => {
           if (worker.cancelled) return;
+          worker.status = "idle";
           worker.lastOutput = result.content || "No response";
+          db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(name);
           feedBackgroundResult(name, worker.lastOutput);
         })
         .catch((err) => {
           if (worker.cancelled) return;
+          worker.status = "error";
           const msg = err instanceof Error ? err.message : String(err);
           worker.lastOutput = `Worker '${name}' failed: ${msg}`;
+          db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(name);
           feedBackgroundResult(name, worker.lastOutput);
-        })
-        .finally(() => {
-          session.destroy().catch(() => {});
-          workers.delete(name);
-          getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(name);
         });
 
       res.json({ status: "dispatched", name, workingDir });
@@ -317,19 +317,18 @@ app.post("/workers/:id/prompt", async (req: Request, res: Response) => {
   worker.session.sendAndWait(prompt, timeoutMs)
     .then((result) => {
       if (worker.cancelled) return;
+      worker.status = "idle";
       worker.lastOutput = result.content || "No response";
+      db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(workerId);
       feedBackgroundResult(workerId, worker.lastOutput);
     })
     .catch((err) => {
       if (worker.cancelled) return;
+      worker.status = "error";
       const msg = err instanceof Error ? err.message : String(err);
       worker.lastOutput = `Worker '${workerId}' failed: ${msg}`;
+      db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(workerId);
       feedBackgroundResult(workerId, worker.lastOutput);
-    })
-    .finally(() => {
-      worker.session.destroy().catch(() => {});
-      getWorkers().delete(workerId);
-      getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(workerId);
     });
 
   res.json({ status: "dispatched", name: workerId });
@@ -935,7 +934,6 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     { command: "/clear", name: "Clear", description: "Clear conversation and start a new session", type: "builtIn" },
     { command: "/new", name: "New session", description: "Clear conversation and start a new session", type: "builtIn" },
     { command: "/restart", name: "Restart", description: "Restart the daemon", type: "builtIn" },
-    { command: "/cron", name: "Schedule task", description: "Schedule a recurring task", type: "builtIn", usage: "/cron <natural language schedule + task>" },
   ];
 
   // Add skill-based slash commands
@@ -1133,10 +1131,11 @@ export function startApiServer(): Promise<void> {
   });
 }
 
-/** Broadcast a proactive message to all connected SSE clients (for background task completions). */
+/** Broadcast a proactive message to all connected SSE clients (for background task completions).
+ *  Uses a distinct event type so the GUI does not finalize an unrelated foreground response. */
 export function broadcastToSSE(text: string): void {
   for (const [, res] of sseClients) {
-    res.write(encodeSseEvent(createCompleteEvent(text)));
+    res.write(encodeSseEvent(createBackgroundCompleteEvent(text)));
   }
 }
 

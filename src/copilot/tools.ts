@@ -57,7 +57,7 @@ function formatWorkerError(workerName: string, startedAt: number, timeoutMs: num
 
 export const BLOCKED_WORKER_DIRS = [
   ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
-  ".kube", ".docker", ".npmrc", ".pypirc",
+  ".kube", ".docker", ".npmrc", ".pypirc", ".attache",
 ];
 
 export const MAX_CONCURRENT_WORKERS = 5;
@@ -152,20 +152,19 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
             if (worker.cancelled) {
               return;
             }
+            worker.status = "idle";
             worker.lastOutput = result.content || "No response";
+            db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
             deps.onWorkerComplete(args.name, worker.lastOutput);
           }).catch((err) => {
             if (worker.cancelled) {
               return;
             }
+            worker.status = "error";
             const errMsg = formatWorkerError(args.name, worker.startedAt!, timeoutMs, err);
             worker.lastOutput = errMsg;
+            db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
             deps.onWorkerComplete(args.name, errMsg);
-          }).finally(() => {
-            // Auto-destroy background workers after completion to free memory (~400MB per worker)
-            session.destroy().catch(() => {});
-            deps.workers.delete(args.name);
-            getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(args.name);
           });
 
           return `Worker '${args.name}' created in ${workingDir}. Task dispatched — I'll notify you when it's done.`;
@@ -205,20 +204,19 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           if (worker.cancelled) {
             return;
           }
+          worker.status = "idle";
           worker.lastOutput = result.content || "No response";
+          db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
           deps.onWorkerComplete(args.name, worker.lastOutput);
         }).catch((err) => {
           if (worker.cancelled) {
             return;
           }
+          worker.status = "error";
           const errMsg = formatWorkerError(args.name, worker.startedAt!, timeoutMs, err);
           worker.lastOutput = errMsg;
+          db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
           deps.onWorkerComplete(args.name, errMsg);
-        }).finally(() => {
-          // Auto-destroy after each send_to_worker dispatch to free memory
-          worker.session.destroy().catch(() => {});
-          deps.workers.delete(args.name);
-          getDb().prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(args.name);
         });
 
         return `Task dispatched to worker '${args.name}'. I'll notify you when it's done.`;
@@ -452,6 +450,10 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           const previous = config.copilotModel;
           config.copilotModel = args.model_id;
           persistModel(args.model_id);
+
+          // Reset orchestrator session so the new model takes effect immediately
+          const { resetForModelSwitch } = await import("./orchestrator.js");
+          resetForModelSwitch();
 
           return `Switched model from '${previous}' to '${args.model_id}'. Takes effect on next message.`;
         } catch (err) {

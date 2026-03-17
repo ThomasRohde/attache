@@ -308,7 +308,9 @@ export class CodexBackendClient implements BackendClient {
 
   private handleServerRequest(msg: RpcRequest): void {
     const method = msg.method;
-    // Auto-approve all approval requests
+    // Security model: Attache is a personal daemon running as the local user.
+    // All actions are auto-approved because the bearer-token-authenticated API
+    // surface is the trust boundary, not individual tool invocations.
     if (method.includes("requestApproval") || method === "applyPatchApproval") {
       this.sendResponse(msg.id, { decision: "acceptForSession" });
     } else if (method === "execCommandApproval") {

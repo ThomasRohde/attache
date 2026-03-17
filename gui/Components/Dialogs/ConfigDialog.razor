@@ -106,6 +106,13 @@
                     break;
             }
         </div>
+        @if (_restartRequired)
+        {
+            <div class="hint" style="color: var(--warning, #e8a838); padding: 8px 16px; margin: 0 16px;">
+                These changes require a daemon restart to take effect.
+                <button class="btn btn-primary" style="margin-left: 8px;" @onclick="RestartAndCloseAsync">Restart Now</button>
+            </div>
+        }
         <div class="form-actions">
             <button class="btn btn-secondary" @onclick="Close">Cancel</button>
             @if (_activeTab != "about")
@@ -130,6 +137,7 @@
     private string _telegramToken = "";
     private string _telegramUserId = "";
     private bool _saving;
+    private bool _restartRequired;
     private List<ModelInfo> _models = [];
 
     private static readonly List<ModelInfo> FallbackModels =
@@ -203,10 +211,11 @@
                 case "general":
                     if (!string.IsNullOrWhiteSpace(_displayName))
                     {
-                        await Api.PostConfigAsync(new Dictionary<string, string>
+                        var (_, rr) = await Api.PostConfigAsync(new Dictionary<string, string>
                         {
                             ["ASSISTANT_DISPLAY_NAME"] = _displayName.Trim()
                         });
+                        _restartRequired = rr;
                     }
                     break;
 
@@ -222,7 +231,10 @@
                     if (!string.IsNullOrWhiteSpace(_telegramUserId))
                         values["AUTHORIZED_USER_ID"] = _telegramUserId.Trim();
                     if (values.Count > 0)
-                        await Api.PostConfigAsync(values);
+                    {
+                        var (_, rrTg) = await Api.PostConfigAsync(values);
+                        _restartRequired = rrTg;
+                    }
                     break;
             }
         }
@@ -232,6 +244,19 @@
         }
 
         await RefreshStateAsync();
+
+        if (_restartRequired)
+        {
+            StateHasChanged();
+            return;
+        }
+
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task RestartAndCloseAsync()
+    {
+        await Api.PostRestartAsync();
         await OnClose.InvokeAsync();
     }
 

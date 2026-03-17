@@ -137,7 +137,12 @@ export function readSkill(slug: string): { ok: boolean; content?: string; source
     [LOCAL_SKILLS_DIR, "local"] as const,
     [GLOBAL_SKILLS_DIR, "global"] as const,
   ]) {
-    const skillMd = join(dir, slug, "SKILL.md");
+    // Guard against path traversal
+    const skillDir = join(dir, slug);
+    if (!skillDir.startsWith(dir + sep)) {
+      return { ok: false, message: `Invalid slug '${slug}'.` };
+    }
+    const skillMd = join(skillDir, "SKILL.md");
     if (existsSync(skillMd)) {
       try {
         const content = readFileSync(skillMd, "utf-8");

@@ -154,7 +154,7 @@ function getCopilotToolSection(productName: string): string {
 
 ### Session Management
 - \`create_worker_session\`: Start a new Copilot worker in a specific directory. Use descriptive names like "auth-fix" or "api-tests".
-- \`send_to_worker\`: Send a prompt to an existing worker session. Runs in the background — you'll get results later.
+- \`send_to_worker\`: Send a follow-up prompt to an existing worker session. Runs in the background — the worker stays alive for more prompts.
 - \`list_sessions\`: List all active worker sessions with their status and working directory.
 - \`check_session_status\`: Get detailed status of a specific worker session.
 - \`kill_session\`: Terminate a worker session when it's no longer needed.
@@ -185,14 +185,18 @@ function getCopilotToolSection(productName: string): string {
 
 **Current time: ${new Date().toISOString()} (system local timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})**
 
-When the user sends "/cron <description>", parse their natural language into a cron expression and use \`schedule_task\`. Cron uses the system local timezone. Common patterns:
-- "every morning at 8am" → "0 8 * * *"
-- "every hour" → "0 * * * *"
-- "every weekday at 9am" → "0 9 * * 1-5"
-- "every 15 minutes" → "*/15 * * * *"
-- "every Sunday at midnight" → "0 0 * * 0"
+Cron expression format: \`minute hour day-of-month month day-of-week\`. Cron uses the system local timezone.
 
-**Important**: Cron is designed for **recurring** schedules, not one-shot delays. If the user asks for something "in 5 minutes" or "in an hour", compute the exact target time from the current time shown above and create a precise cron expression (e.g., current time is 14:30 + 5 minutes → "35 14 * * *"). Warn the user that this will also fire at the same time every day — suggest they disable it after it runs if they only want it once.
+When the user sends "/cron <description>", parse their natural language into a cron expression and use \`schedule_task\`.
+
+**CRITICAL RULES for cron expressions:**
+- **"every N minutes"** → use \`*/N\` in the minute field: \`*/10 * * * *\` (every 10 min), \`*/15 * * * *\` (every 15 min)
+- **"every hour"** → \`0 * * * *\`
+- **"every day at Xam"** → \`0 X * * *\` (e.g., \`0 8 * * *\` for 8am daily)
+- **"every weekday at X"** → \`0 X * * 1-5\`
+- **"every Sunday at midnight"** → \`0 0 * * 0\`
+- **NEVER put specific day/month values** (like \`30 14 17 3 *\`) — this creates a once-a-year schedule, NOT a recurring one. Keep day-of-month and month as \`*\` unless the user explicitly wants monthly or yearly schedules.
+- **"in N minutes" or "in 1 hour"** — cron is for recurring schedules. If the user wants a one-time delayed task, create it with the computed time (current time + delay) but **warn them** it will repeat daily. Suggest they disable it after it runs.
 
 ### Memory
 - \`remember\`: Save something to long-term memory.
@@ -230,8 +234,8 @@ Auth: \`-H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 - **Read skill**: \`curl -s "http://127.0.0.1:${apiPort}/skills/<slug>/content" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 
 ### Scheduling (Cron)
-**Current time: ${new Date().toISOString()} (system local timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})**
-Cron uses the system local timezone. For relative requests like "in 5 minutes", compute the exact target time from the current time and create a precise cron expression. Warn the user that cron is recurring — suggest disabling after it runs if they only want it once.
+**Current time: ${new Date().toISOString()} (timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})**
+Cron format: \`min hour dom month dow\`. Use \`*/N\` for intervals (e.g. \`*/10 * * * *\` = every 10 min). NEVER put specific day/month values unless the user wants monthly/yearly schedules — that creates a once-a-year job, not a recurring one.
 - **Create**: \`curl -s -X POST http://127.0.0.1:${apiPort}/cron -H 'Content-Type: application/json' -H "Authorization: Bearer $(cat ~/.attache/api-token)" -d '{"name":"<name>","prompt":"<task>","cron_expression":"<expr>"}'\`
 - **List**: \`curl -s http://127.0.0.1:${apiPort}/cron -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 - **Toggle**: \`curl -s -X POST http://127.0.0.1:${apiPort}/cron/<id>/toggle -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`

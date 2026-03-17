@@ -16,8 +16,11 @@ import { LOG_PREFIX } from "../identity.js";
 const activeTasks = new Map<number, cron.ScheduledTask>();
 const runningJobs = new Map<number, number>(); // jobId -> startTimestamp
 
-/** Max execution time before the running guard is cleared (10 minutes). */
-const MAX_EXECUTION_MS = 10 * 60 * 1000;
+/** Max execution time before the running guard is cleared (60 minutes).
+ *  This is a safety net for truly stuck jobs — normally the guard is cleared
+ *  by the completion callback. Set high to avoid false positives when the
+ *  orchestrator queue is busy. */
+const MAX_EXECUTION_MS = 60 * 60 * 1000;
 
 function scheduleJob(job: CronJob): void {
   unscheduleJob(job.id);
@@ -116,8 +119,9 @@ async function executeJob(jobId: number): Promise<void> {
       const summary = `**[${job.name}]** ${text}`;
       broadcastToSSE(summary);
 
-      // Telegram notification — always send if telegram is enabled
-      if (config.telegramEnabled) {
+      // Telegram notification — only send if telegram is enabled AND job requests it
+      const jobForNotify = getCronJob(jobId);
+      if (config.telegramEnabled && jobForNotify?.notify_telegram) {
         import("../telegram/bot.js").then(({ sendProactiveMessage }) => {
           sendProactiveMessage(`[${job.name}] ${text}`).catch((err) => {
             console.error(`${LOG_PREFIX} [cron] Telegram send failed for job #${jobId}:`, err);

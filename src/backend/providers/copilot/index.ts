@@ -97,6 +97,9 @@ export class CopilotBackendClient implements BackendClient {
   }
 
   private toSdkConfig(config: SessionConfig): Record<string, any> {
+    // Security model: Attache is a personal daemon running as the local user.
+    // All actions are auto-approved because the bearer-token-authenticated API
+    // surface is the trust boundary, not individual tool invocations.
     const sdkConfig: Record<string, any> = {
       model: config.model,
       onPermissionRequest: approveAll,

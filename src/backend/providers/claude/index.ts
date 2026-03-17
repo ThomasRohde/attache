@@ -83,6 +83,9 @@ export class ClaudeBackendClient implements BackendClient {
   }
 
   private toQueryOptions(sessionConfig: SessionConfig): ClaudeQueryOptions {
+    // Security model: Attache is a personal daemon running as the local user.
+    // Permissions are bypassed because the bearer-token-authenticated API
+    // surface is the trust boundary, not individual tool invocations.
     const opts: ClaudeQueryOptions = {
       model: sessionConfig.model,
       allowedTools: DEFAULT_ALLOWED_TOOLS,

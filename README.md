@@ -4,14 +4,15 @@ Attache is a local AI orchestrator built on the GitHub Copilot SDK. It runs a da
 
 ## Highlights
 
-- Persistent orchestrator daemon with ongoing context and task routing
+- Persistent orchestrator daemon with ongoing context
+- Pluggable backends: Copilot SDK (default), Claude Agent SDK, OpenAI Codex
 - Blazor Hybrid desktop GUI with streaming markdown, 4-pane layout, and system tray
 - Unified conversation transcript across all channels (GUI + Telegram)
 - Optional Telegram control from your phone
 - Configurable workfolder for project-scoped sessions
 - Worker session management for repo-specific coding tasks
+- Cron-based task scheduling for recurring jobs
 - Local HTTP API with SSE for real-time streaming
-- Auto-routing: selects model tier (fast/standard/premium) per message
 - SQLite-backed state, memory, and session persistence
 
 ## Prerequisites
@@ -93,8 +94,8 @@ The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorW
 - Streaming markdown rendering (Markdig + highlight.js)
 - Unified transcript: see both GUI and Telegram conversations
 - Worker list with status indicators and selection
-- Inspector: workfolder, git branch, model, routing, process diagnostics
-- Configuration dialog: model, auto-routing, workfolder, Telegram, display name
+- Inspector: workfolder, git branch, model, backend, process diagnostics
+- Configuration dialog: model, backend, workfolder, Telegram, display name
 - System tray: start/stop/restart daemon, hide to tray on close, auto-start at login
 
 ## Configuration
@@ -106,11 +107,15 @@ Stored in `~/.attache/.env`, editable via the GUI Settings dialog or setup wizar
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token | -- |
 | `AUTHORIZED_USER_ID` | Numeric Telegram user ID | -- |
 | `API_PORT` | Daemon API port | `7777` |
-| `COPILOT_MODEL` | Default Copilot model | `claude-sonnet-4.6` |
+| `COPILOT_MODEL` | Default model | `claude-sonnet-4.6` |
 | `WORKER_TIMEOUT` | Worker timeout in ms | `600000` |
 | `ASSISTANT_DISPLAY_NAME` | Cosmetic name shown in UI | `Attache` |
 | `ATTACHE_SELF_EDIT` | Allow self-modification | disabled |
+| `ATTACHE_PREVENT_SLEEP` | Keep PC awake while daemon runs | disabled |
 | `ATTACHE_WORKFOLDER` | Default working directory for workers | -- |
+| `ATTACHE_BACKEND` | Backend provider (`copilot`, `claude`, `codex`) | `copilot` |
+| `ANTHROPIC_API_KEY` | API key (required for Claude backend) | -- |
+| `OPENAI_API_KEY` | API key (required for Codex backend) | -- |
 
 ### Key paths
 
@@ -147,11 +152,20 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | `POST` | `/cancel` | Cancel in-flight message |
 | `GET` | `/model` | Current model |
 | `POST` | `/model` | Switch model |
-| `GET` | `/auto` | Auto-routing config |
-| `POST` | `/auto` | Update auto-routing |
+| `GET` | `/backend` | Current backend provider |
+| `POST` | `/backend` | Switch backend provider |
 | `GET` | `/memory` | List memories |
+| `POST` | `/memory` | Add a memory |
+| `DELETE` | `/memory/:id` | Remove a memory |
 | `GET` | `/skills` | List skills |
+| `GET` | `/skills/:slug/content` | Read a skill's content |
+| `PUT` | `/skills/:slug` | Update a local skill |
 | `DELETE` | `/skills/:slug` | Remove a local skill |
+| `GET` | `/cron` | List cron jobs |
+| `POST` | `/cron` | Create a cron job |
+| `PUT` | `/cron/:id` | Update a cron job |
+| `DELETE` | `/cron/:id` | Delete a cron job |
+| `GET` | `/capabilities` | API capabilities manifest |
 | `POST` | `/restart` | Restart daemon |
 
 ## Architecture
@@ -166,10 +180,11 @@ Telegram ───> Attache Daemon <─── Desktop GUI
       Worker 1    Worker 2    Worker N
 ```
 
-- **Daemon** (`src/daemon.ts`): Copilot SDK client, Express API, optional Telegram bot
+- **Daemon** (`src/daemon.ts`): Backend client, Express API, optional Telegram bot
 - **Orchestrator** (`src/copilot/orchestrator.ts`): long-lived session, serial message queue
-- **Workers** (`src/copilot/tools.ts`): short-lived sessions in project directories (max 5, 600s timeout)
-- **Router** (`src/copilot/router.ts`): auto-selects model tier per message complexity
+- **Workers** (`src/copilot/tools.ts`): background sessions in project directories (max 5, configurable timeout)
+- **Backend** (`src/backend/`): pluggable providers — Copilot SDK, Claude Agent SDK, OpenAI Codex
+- **Cron** (`src/cron/scheduler.ts`): recurring task scheduling via node-cron
 - **GUI** (`gui/`): Blazor Hybrid WinForms app with streaming SSE, Markdig markdown, system tray
 
 ## Development
@@ -214,10 +229,16 @@ src/
     server.ts         Express API + SSE
     events.ts         SSE event schema
   copilot/
-    orchestrator.ts   Single persistent Copilot session
-    tools.ts          14 tools (workers, skills, memory, routing)
-    router.ts         Auto model tier selection
+    orchestrator.ts   Single persistent session with serial message queue
+    tools.ts          24 tools (workers, skills, memory, models, cron, system)
     skills.ts         Skill discovery and management
+    system-message.ts Orchestrator prompt construction
+  backend/
+    types.ts          BackendClient / BackendSession interfaces
+    registry.ts       Singleton backend registry
+    providers/        copilot, claude, codex implementations
+  cron/
+    scheduler.ts      node-cron task scheduling
   store/
     db.ts             SQLite (better-sqlite3, WAL mode)
   telegram/

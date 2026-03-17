@@ -50,6 +50,7 @@
         Sse.Connected += OnSseConnected;
         Sse.DeltaReceived += OnDelta;
         Sse.MessageComplete += OnMessageComplete;
+        Sse.BackgroundComplete += OnBackgroundComplete;
         Sse.Cancelled += OnCancelled;
         Sse.TranscriptEntry += OnTranscriptEntry;
         Sse.SessionCleared += OnSessionCleared;
@@ -185,6 +186,14 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private void OnBackgroundComplete(string content)
+    {
+        // Background completions are shown as transcript entries without
+        // finalizing the current foreground streaming response.
+        State.AddTranscriptEntry("assistant", content, "background");
+        InvokeAsync(StateHasChanged);
+    }
+
     private void OnCancelled()
     {
         State.HandleCancelled();
@@ -274,6 +283,7 @@
         Sse.Connected -= OnSseConnected;
         Sse.DeltaReceived -= OnDelta;
         Sse.MessageComplete -= OnMessageComplete;
+        Sse.BackgroundComplete -= OnBackgroundComplete;
         Sse.Cancelled -= OnCancelled;
         Sse.TranscriptEntry -= OnTranscriptEntry;
         Sse.SessionCleared -= OnSessionCleared;

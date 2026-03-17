@@ -17,6 +17,7 @@ public class SseService : IDisposable
     public event Action? Connected;
     public event Action<string>? DeltaReceived;
     public event Action<string, RouteInfo?>? MessageComplete;
+    public event Action<string>? BackgroundComplete; // background task completion (does not finalize foreground)
     public event Action? Cancelled;
     public event Action<string, string, string>? TranscriptEntry; // role, content, source
     public event Action? SessionCleared;
@@ -121,6 +122,12 @@ public class SseService : IDisposable
                             var tSource = root.TryGetProperty("source", out var ts)
                                 ? ts.GetString() ?? "" : "";
                             TranscriptEntry?.Invoke(tRole, tContent, tSource);
+                            break;
+
+                        case "background":
+                            var bgContent = root.TryGetProperty("content", out var bg)
+                                ? bg.GetString() ?? "" : "";
+                            BackgroundComplete?.Invoke(bgContent);
                             break;
 
                         case "cancelled":

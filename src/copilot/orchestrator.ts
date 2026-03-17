@@ -459,17 +459,29 @@ export async function sendToOrchestrator(
   })();
 }
 
-/** Cancel the in-flight message and drain the queue. */
+/** Cancel the in-flight foreground message and drain foreground items from the queue.
+ *  Background messages (cron, worker completions) are preserved so they don't strand. */
 export async function cancelCurrentMessage(): Promise<boolean> {
-  // Drain any queued messages
-  const drained = messageQueue.length;
+  // Only drain foreground (non-background) queued messages
+  const preserved: QueuedMessage[] = [];
+  let cancelledCount = 0;
   while (messageQueue.length > 0) {
     const item = messageQueue.shift()!;
-    item.reject(new Error("Cancelled"));
+    if (item.sourceChannel === undefined) {
+      // Background message — keep it in the queue
+      preserved.push(item);
+    } else {
+      item.reject(new Error("Cancelled"));
+      cancelledCount++;
+    }
+  }
+  // Re-queue preserved background messages
+  for (const item of preserved) {
+    messageQueue.push(item);
   }
 
-  // Abort the active session request
-  if (orchestratorSession && currentCallback) {
+  // Abort the active session request only if it's a foreground message
+  if (orchestratorSession && currentCallback && currentSourceChannel !== undefined) {
     try {
       await orchestratorSession.abort();
       console.log(`${LOG_PREFIX} Aborted in-flight request`);
@@ -479,7 +491,7 @@ export async function cancelCurrentMessage(): Promise<boolean> {
     }
   }
 
-  return drained > 0;
+  return cancelledCount > 0;
 }
 
 export function getWorkers(): Map<string, WorkerInfo> {

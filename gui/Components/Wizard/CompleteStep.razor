@@ -50,7 +50,7 @@
             if (!string.IsNullOrWhiteSpace(Data.AuthorizedUserId))
                 values["AUTHORIZED_USER_ID"] = Data.AuthorizedUserId.Trim();
 
-            var configOk = await Api.PostConfigAsync(values);
+            var (configOk, _) = await Api.PostConfigAsync(values);
             if (!configOk)
             {
                 _error = "Failed to save configuration. Is the daemon running?";

@@ -5,6 +5,7 @@ export type ApiEventName =
   | "orchestrator.message.delta"
   | "orchestrator.message.complete"
   | "orchestrator.message.cancelled"
+  | "orchestrator.background.complete"
   | "transcript.entry"
   | "session.cleared"
   | "cron.job.created"
@@ -13,7 +14,7 @@ export type ApiEventName =
   | "cron.execution.started"
   | "cron.execution.complete";
 
-export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript" | "cleared" | "cron";
+export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "background" | "transcript" | "cleared" | "cron";
 
 type ConnectedData = { connectionId: string };
 type MessageData = { content: string };
@@ -55,6 +56,14 @@ export function createCompleteEvent(
   content: string,
 ): ApiEventEnvelope<MessageData> {
   return withEnvelope("orchestrator.message.complete", "message", {
+    content,
+  });
+}
+
+export function createBackgroundCompleteEvent(
+  content: string,
+): ApiEventEnvelope<MessageData> {
+  return withEnvelope("orchestrator.background.complete", "background", {
     content,
   });
 }
