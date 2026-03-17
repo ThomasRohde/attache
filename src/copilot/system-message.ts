@@ -134,6 +134,17 @@ ${toolSection}
 10. When using skills, follow the skill's instructions precisely.
 11. If a skill requires authentication that hasn't been set up, explain what's needed and help the user through it.
 ${memoryToolBlock}
+
+## Skill Self-Improvement
+
+You can autonomously improve skills based on usage experience:
+
+1. **Log every skill usage**: After completing a task that used a skill, call \`log_skill_usage\` with the outcome (success/failure/partial) and notes about what worked or didn't.
+2. **Check stats before improving**: Before deciding to update a skill, use \`get_skill_stats\` to look for patterns — a single failure doesn't warrant changes, but repeated issues do.
+3. **Improve with \`improve_skill\`**: When a skill has consistent problems, update its instructions. Preserve the existing content and add corrections, clarifications, or missing steps. Don't rewrite from scratch unless the skill is fundamentally wrong.
+4. **Local skills only**: You can only improve skills in the local directory (~/.attache/skills). If a bundled skill has issues, mention it to the user so they can report it upstream.
+5. **Skip transient failures**: Don't improve a skill after one-off external failures (network timeouts, auth token expired, service outage). Only improve when the skill's instructions themselves are the problem.
+
 14. **Sending media to Telegram**: You can send photos/images to the user on Telegram by calling: \`curl -s -X POST http://127.0.0.1:${apiPort}/send-photo -H 'Content-Type: application/json' -d '{"photo": "<path-or-url>", "caption": "<optional caption>"}'\`. Use this whenever you have an image to share.
 ${selfEditBlock}${memoryBlock}`;
 }
@@ -155,6 +166,9 @@ function getCopilotToolSection(productName: string): string {
 ### Skills
 - \`list_skills\`: Show all skills available to ${productName}.
 - \`learn_skill\`: Teach ${productName} a new skill by writing a SKILL.md file.
+- \`improve_skill\`: Update a local skill's instructions based on usage experience.
+- \`log_skill_usage\`: Log the outcome (success/failure/partial) after using a skill.
+- \`get_skill_stats\`: View usage statistics and failure patterns for skills.
 
 ### Model Management
 - \`list_models\`: List all available Copilot models with their billing tier.
@@ -191,6 +205,13 @@ Auth: \`-H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 ### Models
 - **List**: \`curl -s http://127.0.0.1:${apiPort}/models -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 - **Switch**: \`curl -s -X POST http://127.0.0.1:${apiPort}/model -H 'Content-Type: application/json' -H "Authorization: Bearer $(cat ~/.attache/api-token)" -d '{"model":"<model-id>"}'\`
+### Skills
+- **Update skill**: \`curl -s -X PUT http://127.0.0.1:${apiPort}/skills/<slug> -H 'Content-Type: application/json' -H "Authorization: Bearer $(cat ~/.attache/api-token)" -d '{"instructions":"<new instructions>","name":"<optional>","description":"<optional>"}'\`
+- **Log usage**: \`curl -s -X POST http://127.0.0.1:${apiPort}/skills/<slug>/usage -H 'Content-Type: application/json' -H "Authorization: Bearer $(cat ~/.attache/api-token)" -d '{"outcome":"success|failure|partial","notes":"<optional>"}'\`
+- **Get stats**: \`curl -s "http://127.0.0.1:${apiPort}/skills/stats" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+- **Get history**: \`curl -s "http://127.0.0.1:${apiPort}/skills/<slug>/usage" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+- **Read skill**: \`curl -s "http://127.0.0.1:${apiPort}/skills/<slug>/content" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+
 ### Self-Management
 - **Restart**: \`curl -s -X POST http://127.0.0.1:${apiPort}/restart -H "Authorization: Bearer $(cat ~/.attache/api-token)"\``;
 }

@@ -2,11 +2,11 @@ import { z } from "zod";
 import { defineTool } from "../backend/providers/copilot/tool-bridge.js";
 import type { Tool } from "../backend/providers/copilot/tool-bridge.js";
 import type { BackendClient, BackendSession } from "../backend/types.js";
-import { getDb, addMemory, searchMemories, removeMemory } from "../store/db.js";
+import { getDb, addMemory, searchMemories, removeMemory, logSkillUsage, getSkillStats } from "../store/db.js";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, sep, resolve } from "path";
 import { homedir } from "os";
-import { listSkills, createSkill, removeSkill } from "./skills.js";
+import { listSkills, createSkill, removeSkill, updateSkill, readSkill } from "./skills.js";
 import { config, persistModel } from "../config.js";
 import { SESSIONS_DIR } from "../paths.js";
 import { getCurrentSourceChannel } from "./orchestrator.js";
@@ -22,6 +22,9 @@ export const TOOL_REGISTRY: { name: string; description: string; category: strin
   { name: "list_skills", description: "List all available skills", category: "skills" },
   { name: "learn_skill", description: "Teach Attache a new skill by creating a SKILL.md instruction file", category: "skills" },
   { name: "uninstall_skill", description: "Remove a skill from the local skills directory", category: "skills" },
+  { name: "improve_skill", description: "Update a local skill's instructions based on usage experience", category: "skills" },
+  { name: "log_skill_usage", description: "Log the outcome of using a skill", category: "skills" },
+  { name: "get_skill_stats", description: "Get usage statistics for skills", category: "skills" },
   { name: "list_models", description: "List all available models", category: "models" },
   { name: "switch_model", description: "Switch the model for conversations", category: "models" },
   { name: "remember", description: "Save something to long-term memory", category: "memory" },
@@ -323,6 +326,68 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
       handler: async (args) => {
         const result = removeSkill(args.slug);
         return result.message;
+      },
+    }),
+
+    defineTool("improve_skill", {
+      description:
+        "Update a local skill's instructions based on usage experience. Use this when you've discovered " +
+        "better approaches, missing steps, or corrections after using a skill. Only works for local skills " +
+        "(~/.attache/skills) — bundled and global skills cannot be modified.",
+      parameters: z.object({
+        slug: z.string().regex(/^[a-z0-9]+(-[a-z0-9]+)*$/).describe("The kebab-case slug of the skill to update"),
+        name: z.string().refine(s => !s.includes('\n'), "must be single-line").optional().describe("Updated name (optional, keeps existing if omitted)"),
+        description: z.string().refine(s => !s.includes('\n'), "must be single-line").optional().describe("Updated description (optional, keeps existing if omitted)"),
+        instructions: z.string().describe("The complete updated instructions for the skill (replaces existing body)"),
+      }),
+      handler: async (args) => {
+        const result = updateSkill(args.slug, {
+          name: args.name,
+          description: args.description,
+          instructions: args.instructions,
+        });
+        return result.message;
+      },
+    }),
+
+    defineTool("log_skill_usage", {
+      description:
+        "Log the outcome after using a skill. Call this after every skill-driven task to track " +
+        "success/failure patterns over time. This data informs when skills need improvement.",
+      parameters: z.object({
+        slug: z.string().describe("The slug of the skill that was used"),
+        outcome: z.enum(["success", "failure", "partial"]).describe("How the task went: success, failure, or partial"),
+        notes: z.string().optional().describe("Optional notes about what worked, what failed, or what could be improved"),
+      }),
+      handler: async (args) => {
+        const id = logSkillUsage(args.slug, args.outcome, args.notes);
+        return `Logged ${args.outcome} for skill '${args.slug}' (#${id}).`;
+      },
+    }),
+
+    defineTool("get_skill_stats", {
+      description:
+        "Get usage statistics for skills — total uses, success/failure/partial counts, last used date, " +
+        "and recent notes. Use this to check for failure patterns before deciding to improve a skill.",
+      parameters: z.object({
+        slug: z.string().optional().describe("Optional: filter stats to a specific skill slug"),
+      }),
+      handler: async (args) => {
+        const stats = getSkillStats(args.slug);
+        if (stats.length === 0) {
+          return args.slug
+            ? `No usage data for skill '${args.slug}'.`
+            : "No skill usage data recorded yet.";
+        }
+        const lines = stats.map((s) => {
+          const rate = s.total > 0 ? Math.round((s.successes / s.total) * 100) : 0;
+          let line = `• ${s.slug}: ${s.total} uses (${rate}% success) — ${s.successes} ok, ${s.failures} fail, ${s.partials} partial. Last: ${s.lastUsed}`;
+          if (s.recentNotes.length > 0) {
+            line += `\n  Notes: ${s.recentNotes.join("; ")}`;
+          }
+          return line;
+        });
+        return `Skill usage stats:\n${lines.join("\n")}`;
       },
     }),
 

@@ -6,8 +6,8 @@ import { execSync } from "child_process";
 import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult, resetSession } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistEnvVar, prepareConfigUpdate, persistConfigUpdate, validateAndSwitchModel } from "../config.js";
-import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearConversationLog } from "../store/db.js";
-import { listSkills, removeSkill } from "../copilot/skills.js";
+import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearConversationLog, logSkillUsage, getSkillStats, getSkillUsageHistory } from "../store/db.js";
+import { listSkills, removeSkill, updateSkill, readSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { API_TOKEN_PATH, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
@@ -692,6 +692,66 @@ app.delete("/memory/:id", (req: Request, res: Response) => {
 app.get("/skills", (_req: Request, res: Response) => {
   const skills = listSkills();
   res.json(skills);
+});
+
+// Skill usage stats (must be before /skills/:slug to avoid being shadowed)
+app.get("/skills/stats", (req: Request, res: Response) => {
+  const slug = typeof req.query.slug === "string" ? req.query.slug : undefined;
+  const stats = getSkillStats(slug);
+  res.json(stats);
+});
+
+// Read a skill's content
+app.get("/skills/:slug/content", (req: Request, res: Response) => {
+  const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+  const result = readSkill(slug);
+  if (!result.ok) {
+    res.status(404).json({ error: result.message });
+    return;
+  }
+  res.json({ slug, source: result.source, content: result.content });
+});
+
+// Update a local skill
+app.put("/skills/:slug", (req: Request, res: Response) => {
+  const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+  const { name, description, instructions } = req.body as {
+    name?: string;
+    description?: string;
+    instructions?: string;
+  };
+  if (!instructions || typeof instructions !== "string") {
+    res.status(400).json({ error: "Missing 'instructions' in request body" });
+    return;
+  }
+  const result = updateSkill(slug, { name, description, instructions });
+  if (!result.ok) {
+    res.status(400).json({ error: result.message });
+    return;
+  }
+  res.json({ ok: true, message: result.message });
+});
+
+// Log skill usage
+app.post("/skills/:slug/usage", (req: Request, res: Response) => {
+  const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+  const { outcome, notes } = req.body as { outcome?: string; notes?: string };
+  const validOutcomes = ["success", "failure", "partial"];
+  if (!outcome || !validOutcomes.includes(outcome)) {
+    res.status(400).json({ error: `Invalid outcome. Must be one of: ${validOutcomes.join(", ")}` });
+    return;
+  }
+  const id = logSkillUsage(slug, outcome as "success" | "failure" | "partial", notes);
+  res.json({ id, slug, outcome, notes: notes ?? null });
+});
+
+// Get skill usage history
+app.get("/skills/:slug/usage", (req: Request, res: Response) => {
+  const slug = Array.isArray(req.params.slug) ? req.params.slug[0] : req.params.slug;
+  const requestedLimit = Number.parseInt(String(req.query.limit ?? "20"), 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 200)) : 20;
+  const history = getSkillUsageHistory(slug, limit);
+  res.json(history);
 });
 
 // Remove a local skill

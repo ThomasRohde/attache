@@ -5,6 +5,7 @@ import { formatAssistantHandle } from "../identity.js";
 
 let db: Database.Database | undefined;
 let logInsertCount = 0;
+let skillUsageInsertCount = 0;
 export const ASSISTANT_DISPLAY_NAME_STATE_KEY = "assistant_display_name";
 
 export function getDb(): Database.Database {
@@ -52,6 +53,16 @@ export function getDb(): Database.Database {
         last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS skill_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug TEXT NOT NULL,
+        outcome TEXT NOT NULL CHECK(outcome IN ('success', 'failure', 'partial')),
+        notes TEXT,
+        used_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_skill_usage_slug ON skill_usage(slug)`);
     // Migrate: if the table already existed with a stricter CHECK, recreate it
     try {
       const probe = db.prepare(
@@ -236,6 +247,62 @@ export function getMemorySummary(): string {
   });
 
   return sections.join("\n");
+}
+
+/** Log a skill usage event. Returns the row ID. Prunes to 500 rows every 50 inserts. */
+export function logSkillUsage(
+  slug: string,
+  outcome: "success" | "failure" | "partial",
+  notes?: string,
+): number {
+  const db = getDb();
+  const result = db.prepare(
+    `INSERT INTO skill_usage (slug, outcome, notes) VALUES (?, ?, ?)`,
+  ).run(slug, outcome, notes ?? null);
+  skillUsageInsertCount++;
+  if (skillUsageInsertCount % 50 === 0) {
+    db.prepare(`DELETE FROM skill_usage WHERE id NOT IN (SELECT id FROM skill_usage ORDER BY id DESC LIMIT 500)`).run();
+  }
+  return result.lastInsertRowid as number;
+}
+
+/** Get aggregated skill usage stats, optionally filtered by slug. */
+export function getSkillStats(
+  slug?: string,
+): { slug: string; total: number; successes: number; failures: number; partials: number; lastUsed: string; recentNotes: string[] }[] {
+  const db = getDb();
+  const condition = slug ? `WHERE slug = ?` : "";
+  const params = slug ? [slug] : [];
+
+  const rows = db.prepare(
+    `SELECT slug,
+            COUNT(*) as total,
+            SUM(CASE WHEN outcome = 'success' THEN 1 ELSE 0 END) as successes,
+            SUM(CASE WHEN outcome = 'failure' THEN 1 ELSE 0 END) as failures,
+            SUM(CASE WHEN outcome = 'partial' THEN 1 ELSE 0 END) as partials,
+            MAX(used_at) as lastUsed
+     FROM skill_usage ${condition}
+     GROUP BY slug
+     ORDER BY lastUsed DESC`,
+  ).all(...params) as { slug: string; total: number; successes: number; failures: number; partials: number; lastUsed: string }[];
+
+  return rows.map((r) => {
+    const noteRows = db.prepare(
+      `SELECT notes FROM skill_usage WHERE slug = ? AND notes IS NOT NULL ORDER BY id DESC LIMIT 5`,
+    ).all(r.slug) as { notes: string }[];
+    return { ...r, recentNotes: noteRows.map((n) => n.notes) };
+  });
+}
+
+/** Get raw skill usage history for a specific skill. */
+export function getSkillUsageHistory(
+  slug: string,
+  limit = 20,
+): { id: number; slug: string; outcome: string; notes: string | null; used_at: string }[] {
+  const db = getDb();
+  return db.prepare(
+    `SELECT id, slug, outcome, notes, used_at FROM skill_usage WHERE slug = ? ORDER BY id DESC LIMIT ?`,
+  ).all(slug, limit) as { id: number; slug: string; outcome: string; notes: string | null; used_at: string }[];
 }
 
 export function closeDb(): void {
