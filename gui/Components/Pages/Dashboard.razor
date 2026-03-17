@@ -54,6 +54,11 @@
         Sse.TranscriptEntry += OnTranscriptEntry;
         Sse.SessionCleared += OnSessionCleared;
         Sse.Disconnected += OnDisconnected;
+        Sse.CronJobChanged += OnCronJobChanged;
+        Sse.CronExecutionComplete += OnCronExecutionComplete;
+
+        // Always register cron as a known channel
+        State.KnownChannels.Add("cron");
 
         // Load conversation history from database
         await LoadTranscriptHistoryAsync();
@@ -73,6 +78,7 @@
         await FetchWorkfolderAsync();
         await FetchCapabilitiesAsync();
         await FetchSkillsAsync();
+        await FetchCronJobsAsync();
     }
 
     private async Task LoadTranscriptHistoryAsync()
@@ -160,6 +166,7 @@
             await FetchWorkfolderAsync();
             await FetchCapabilitiesAsync();
             await FetchSkillsAsync();
+            await FetchCronJobsAsync();
             StateHasChanged();
         });
     }
@@ -204,6 +211,39 @@
         InvokeAsync(StateHasChanged);
     }
 
+    private void OnCronJobChanged()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await FetchCronJobsAsync();
+            StateHasChanged();
+        });
+    }
+
+    private void OnCronExecutionComplete()
+    {
+        _ = InvokeAsync(async () =>
+        {
+            await FetchCronJobsAsync();
+            var executions = await Api.GetCronHistoryAsync(State.SelectedCronJobId);
+            State.CronExecutions = executions;
+            State.RecordChannelActivity("cron");
+            StateHasChanged();
+        });
+    }
+
+    private async Task FetchCronJobsAsync()
+    {
+        try
+        {
+            var jobs = await Api.GetCronJobsAsync();
+            State.CronJobs = jobs;
+            var executions = await Api.GetCronHistoryAsync(State.SelectedCronJobId);
+            State.CronExecutions = executions;
+        }
+        catch { }
+    }
+
     private void OnDisconnected(string message)
     {
         State.ConnectionState = ConnectionState.Connecting;
@@ -238,5 +278,7 @@
         Sse.TranscriptEntry -= OnTranscriptEntry;
         Sse.SessionCleared -= OnSessionCleared;
         Sse.Disconnected -= OnDisconnected;
+        Sse.CronJobChanged -= OnCronJobChanged;
+        Sse.CronExecutionComplete -= OnCronExecutionComplete;
     }
 }

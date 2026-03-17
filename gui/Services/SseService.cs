@@ -21,6 +21,8 @@ public class SseService : IDisposable
     public event Action<string, string, string>? TranscriptEntry; // role, content, source
     public event Action? SessionCleared;
     public event Action<string>? Disconnected;
+    public event Action? CronJobChanged; // created, updated, deleted
+    public event Action? CronExecutionComplete;
     public event Action<string>? Error;
 
     public SseService(ApiClient api)
@@ -127,6 +129,15 @@ public class SseService : IDisposable
 
                         case "cleared":
                             SessionCleared?.Invoke();
+                            break;
+
+                        case "cron":
+                            var eventName = root.TryGetProperty("eventName", out var en)
+                                ? en.GetString() ?? "" : "";
+                            if (eventName.StartsWith("cron.job."))
+                                CronJobChanged?.Invoke();
+                            else if (eventName.StartsWith("cron.execution."))
+                                CronExecutionComplete?.Invoke();
                             break;
                     }
                 }

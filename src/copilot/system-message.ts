@@ -177,6 +177,23 @@ function getCopilotToolSection(productName: string): string {
 ### Self-Management
 - \`restart_attache\`: Restart the ${productName} daemon.
 
+### Scheduling (Cron)
+- \`schedule_task\`: Create a recurring scheduled task with a cron expression.
+- \`list_schedules\`: List all scheduled tasks with their status.
+- \`update_schedule\`: Modify a scheduled task (name, prompt, schedule, enabled, notifications).
+- \`remove_schedule\`: Delete a scheduled task.
+
+**Current time: ${new Date().toISOString()} (system local timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})**
+
+When the user sends "/cron <description>", parse their natural language into a cron expression and use \`schedule_task\`. Cron uses the system local timezone. Common patterns:
+- "every morning at 8am" → "0 8 * * *"
+- "every hour" → "0 * * * *"
+- "every weekday at 9am" → "0 9 * * 1-5"
+- "every 15 minutes" → "*/15 * * * *"
+- "every Sunday at midnight" → "0 0 * * 0"
+
+**Important**: Cron is designed for **recurring** schedules, not one-shot delays. If the user asks for something "in 5 minutes" or "in an hour", compute the exact target time from the current time shown above and create a precise cron expression (e.g., current time is 14:30 + 5 minutes → "35 14 * * *"). Warn the user that this will also fire at the same time every day — suggest they disable it after it runs if they only want it once.
+
 ### Memory
 - \`remember\`: Save something to long-term memory.
 - \`recall\`: Search long-term memory by keyword and/or category.
@@ -211,6 +228,15 @@ Auth: \`-H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 - **Get stats**: \`curl -s "http://127.0.0.1:${apiPort}/skills/stats" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 - **Get history**: \`curl -s "http://127.0.0.1:${apiPort}/skills/<slug>/usage" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 - **Read skill**: \`curl -s "http://127.0.0.1:${apiPort}/skills/<slug>/content" -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+
+### Scheduling (Cron)
+**Current time: ${new Date().toISOString()} (system local timezone: ${Intl.DateTimeFormat().resolvedOptions().timeZone})**
+Cron uses the system local timezone. For relative requests like "in 5 minutes", compute the exact target time from the current time and create a precise cron expression. Warn the user that cron is recurring — suggest disabling after it runs if they only want it once.
+- **Create**: \`curl -s -X POST http://127.0.0.1:${apiPort}/cron -H 'Content-Type: application/json' -H "Authorization: Bearer $(cat ~/.attache/api-token)" -d '{"name":"<name>","prompt":"<task>","cron_expression":"<expr>"}'\`
+- **List**: \`curl -s http://127.0.0.1:${apiPort}/cron -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+- **Toggle**: \`curl -s -X POST http://127.0.0.1:${apiPort}/cron/<id>/toggle -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+- **Delete**: \`curl -s -X DELETE http://127.0.0.1:${apiPort}/cron/<id> -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
+- **History**: \`curl -s http://127.0.0.1:${apiPort}/cron/history -H "Authorization: Bearer $(cat ~/.attache/api-token)"\`
 
 ### Self-Management
 - **Restart**: \`curl -s -X POST http://127.0.0.1:${apiPort}/restart -H "Authorization: Bearer $(cat ~/.attache/api-token)"\``;

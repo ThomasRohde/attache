@@ -24,6 +24,11 @@ public class AppState
     public bool IsProcessing { get; set; }
     public string? WorkerLogs { get; set; }
 
+    // Cron
+    public List<CronJob> CronJobs { get; set; } = [];
+    public List<CronExecution> CronExecutions { get; set; } = [];
+    public int? SelectedCronJobId { get; set; }
+
     // Channel tabs
     public string SelectedChannel { get; set; } = "tui";
     public HashSet<string> KnownChannels { get; } = new() { "tui" };

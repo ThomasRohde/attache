@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c/Users/thoma/.claude/projects/c--Users-thoma-Projects-attache/memory//**)",
+      "Read(//c/Users/thoma/.claude/projects/**)",
+      "Bash(uvx cwmem:*)"
+    ]
+  }
+}

@@ -16,6 +16,7 @@ import { statSync } from "fs";
 import { checkForUpdate } from "./update.js";
 import { getEffectiveIdentity, LOG_PREFIX, PRIMARY_RUNTIME_ENV } from "./identity.js";
 import { acquireWakeLock, releaseWakeLock } from "./wakelock.js";
+import { startCronScheduler, stopCronScheduler } from "./cron/scheduler.js";
 
 function truncate(text: string, max = 200): string {
   const oneLine = text.replace(/\n/g, " ").trim();
@@ -86,6 +87,9 @@ async function main(): Promise<void> {
   // Start HTTP API for TUI
   await startApiServer();
 
+  // Start cron scheduler
+  startCronScheduler();
+
   // Start Telegram bot (if configured)
   if (config.telegramEnabled) {
     createBot();
@@ -146,6 +150,8 @@ async function shutdown(): Promise<void> {
   }, 3000);
   forceTimer.unref();
 
+  stopCronScheduler();
+
   if (config.telegramEnabled) {
     try { await stopBot(); } catch { /* best effort */ }
   }
@@ -173,6 +179,8 @@ export async function restartDaemon(): Promise<void> {
   if (runningCount > 0) {
     console.log(`${LOG_PREFIX} ⚠ Destroying ${runningCount} active worker(s) for restart`);
   }
+
+  stopCronScheduler();
 
   if (config.telegramEnabled) {
     await sendProactiveMessage(`${identity.assistantDisplayName} is restarting — back in a sec ⏳`).catch(() => {});

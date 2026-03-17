@@ -63,6 +63,34 @@ export function getDb(): Database.Database {
       )
     `);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_skill_usage_slug ON skill_usage(slug)`);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cron_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        prompt TEXT NOT NULL,
+        cron_expression TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        notify_telegram INTEGER NOT NULL DEFAULT 0,
+        last_run_at DATETIME,
+        last_status TEXT CHECK(last_status IN ('success', 'failure', 'running')),
+        next_run_at DATETIME,
+        run_count INTEGER NOT NULL DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS cron_executions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id INTEGER NOT NULL REFERENCES cron_jobs(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK(status IN ('success', 'failure', 'running')),
+        result TEXT,
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        finished_at DATETIME,
+        duration_ms INTEGER
+      )
+    `);
+    db.exec(`CREATE INDEX IF NOT EXISTS idx_cron_exec_job ON cron_executions(job_id)`);
     // Migrate: if the table already existed with a stricter CHECK, recreate it
     try {
       const probe = db.prepare(
@@ -303,6 +331,153 @@ export function getSkillUsageHistory(
   return db.prepare(
     `SELECT id, slug, outcome, notes, used_at FROM skill_usage WHERE slug = ? ORDER BY id DESC LIMIT ?`,
   ).all(slug, limit) as { id: number; slug: string; outcome: string; notes: string | null; used_at: string }[];
+}
+
+// ── Cron Job CRUD ─────────────────────────────────────────
+
+export interface CronJob {
+  id: number;
+  name: string;
+  prompt: string;
+  cron_expression: string;
+  enabled: number;
+  notify_telegram: number;
+  last_run_at: string | null;
+  last_status: string | null;
+  next_run_at: string | null;
+  run_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CronExecution {
+  id: number;
+  job_id: number;
+  status: string;
+  result: string | null;
+  started_at: string;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+let cronExecInsertCount = 0;
+
+export function createCronJob(
+  name: string,
+  prompt: string,
+  cronExpr: string,
+  notifyTelegram = false,
+): number {
+  const db = getDb();
+  const result = db.prepare(
+    `INSERT INTO cron_jobs (name, prompt, cron_expression, notify_telegram) VALUES (?, ?, ?, ?)`,
+  ).run(name, prompt, cronExpr, notifyTelegram ? 1 : 0);
+  return result.lastInsertRowid as number;
+}
+
+export function getCronJobs(): CronJob[] {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM cron_jobs ORDER BY id`).all() as CronJob[];
+}
+
+export function getCronJob(id: number): CronJob | undefined {
+  const db = getDb();
+  return db.prepare(`SELECT * FROM cron_jobs WHERE id = ?`).get(id) as CronJob | undefined;
+}
+
+export function updateCronJob(
+  id: number,
+  fields: Partial<{ name: string; prompt: string; cron_expression: string; enabled: boolean; notify_telegram: boolean }>,
+): void {
+  const db = getDb();
+  const sets: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (fields.name !== undefined) { sets.push("name = ?"); params.push(fields.name); }
+  if (fields.prompt !== undefined) { sets.push("prompt = ?"); params.push(fields.prompt); }
+  if (fields.cron_expression !== undefined) { sets.push("cron_expression = ?"); params.push(fields.cron_expression); }
+  if (fields.enabled !== undefined) { sets.push("enabled = ?"); params.push(fields.enabled ? 1 : 0); }
+  if (fields.notify_telegram !== undefined) { sets.push("notify_telegram = ?"); params.push(fields.notify_telegram ? 1 : 0); }
+
+  if (sets.length === 0) return;
+  sets.push("updated_at = CURRENT_TIMESTAMP");
+  params.push(id);
+
+  db.prepare(`UPDATE cron_jobs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
+}
+
+export function deleteCronJob(id: number): boolean {
+  const db = getDb();
+  const result = db.prepare(`DELETE FROM cron_jobs WHERE id = ?`).run(id);
+  return result.changes > 0;
+}
+
+export function logCronExecution(jobId: number, status: string): number {
+  const db = getDb();
+  const result = db.prepare(
+    `INSERT INTO cron_executions (job_id, status) VALUES (?, ?)`,
+  ).run(jobId, status);
+
+  // Prune: every 100 inserts, keep last 500 per job
+  cronExecInsertCount++;
+  if (cronExecInsertCount % 100 === 0) {
+    db.prepare(
+      `DELETE FROM cron_executions WHERE id NOT IN (
+        SELECT e.id FROM cron_executions e
+        INNER JOIN (
+          SELECT job_id, id,
+            ROW_NUMBER() OVER (PARTITION BY job_id ORDER BY id DESC) AS rn
+          FROM cron_executions
+        ) ranked ON e.id = ranked.id AND ranked.rn <= 500
+      )`,
+    ).run();
+  }
+
+  return result.lastInsertRowid as number;
+}
+
+export function completeCronExecution(
+  executionId: number,
+  status: "success" | "failure",
+  result: string | null,
+  durationMs: number,
+): void {
+  const db = getDb();
+  db.prepare(
+    `UPDATE cron_executions SET status = ?, result = ?, finished_at = CURRENT_TIMESTAMP, duration_ms = ? WHERE id = ?`,
+  ).run(status, result, durationMs, executionId);
+}
+
+export function getCronExecutions(jobId?: number, limit = 50): CronExecution[] {
+  const db = getDb();
+  if (jobId !== undefined) {
+    return db.prepare(
+      `SELECT * FROM cron_executions WHERE job_id = ? ORDER BY id DESC LIMIT ?`,
+    ).all(jobId, limit) as CronExecution[];
+  }
+  return db.prepare(
+    `SELECT * FROM cron_executions ORDER BY id DESC LIMIT ?`,
+  ).all(limit) as CronExecution[];
+}
+
+export function updateCronJobRunState(
+  id: number,
+  state: { lastRunAt?: string; lastStatus?: string; nextRunAt?: string | null; runCount?: number },
+): void {
+  const db = getDb();
+  const sets: string[] = [];
+  const params: (string | number | null)[] = [];
+
+  if (state.lastRunAt !== undefined) { sets.push("last_run_at = ?"); params.push(state.lastRunAt); }
+  if (state.lastStatus !== undefined) { sets.push("last_status = ?"); params.push(state.lastStatus); }
+  if (state.nextRunAt !== undefined) { sets.push("next_run_at = ?"); params.push(state.nextRunAt); }
+  if (state.runCount !== undefined) { sets.push("run_count = ?"); params.push(state.runCount); }
+
+  if (sets.length === 0) return;
+  sets.push("updated_at = CURRENT_TIMESTAMP");
+  params.push(id);
+
+  db.prepare(`UPDATE cron_jobs SET ${sets.join(", ")} WHERE id = ?`).run(...params);
 }
 
 export function closeDb(): void {

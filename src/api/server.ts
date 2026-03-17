@@ -6,7 +6,7 @@ import { execSync } from "child_process";
 import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult, resetSession } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
 import { config, persistEnvVar, prepareConfigUpdate, persistConfigUpdate, validateAndSwitchModel } from "../config.js";
-import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearConversationLog, logSkillUsage, getSkillStats, getSkillUsageHistory } from "../store/db.js";
+import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearConversationLog, logSkillUsage, getSkillStats, getSkillUsageHistory, getCronJobs, getCronJob, createCronJob, updateCronJob, deleteCronJob, getCronExecutions } from "../store/db.js";
 import { listSkills, removeSkill, updateSkill, readSkill } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
@@ -25,8 +25,11 @@ import {
   createDeltaEvent,
   createClearedEvent,
   createTranscriptEvent,
+  createCronJobEvent,
+  createCronExecutionEvent,
   encodeSseEvent,
 } from "./events.js";
+import { validateCronExpression, rescheduleJob, unscheduleJob } from "../cron/scheduler.js";
 
 // Ensure token file exists (generate on first run)
 let apiToken: string | null = null;
@@ -765,6 +768,154 @@ app.delete("/skills/:slug", (req: Request, res: Response) => {
   }
 });
 
+// ── Cron Job Endpoints ────────────────────────────────────────
+
+// List all cron jobs
+app.get("/cron", (_req: Request, res: Response) => {
+  const jobs = getCronJobs();
+  res.json(jobs);
+});
+
+// Get execution history (all jobs) — must be before /cron/:id
+app.get("/cron/history", (req: Request, res: Response) => {
+  const requestedLimit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 200)) : 50;
+  const executions = getCronExecutions(undefined, limit);
+  res.json(executions);
+});
+
+// Get a single cron job
+app.get("/cron/:id", (req: Request, res: Response) => {
+  const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid job ID" });
+    return;
+  }
+  const job = getCronJob(id);
+  if (!job) {
+    res.status(404).json({ error: `Cron job #${id} not found` });
+    return;
+  }
+  res.json(job);
+});
+
+// Create a cron job
+app.post("/cron", (req: Request, res: Response) => {
+  const { name, prompt, cron_expression, notify_telegram } = req.body as {
+    name?: string;
+    prompt?: string;
+    cron_expression?: string;
+    notify_telegram?: boolean;
+  };
+
+  if (!name || typeof name !== "string") {
+    res.status(400).json({ error: "Missing 'name'" });
+    return;
+  }
+  if (!prompt || typeof prompt !== "string") {
+    res.status(400).json({ error: "Missing 'prompt'" });
+    return;
+  }
+  if (!cron_expression || typeof cron_expression !== "string") {
+    res.status(400).json({ error: "Missing 'cron_expression'" });
+    return;
+  }
+  if (!validateCronExpression(cron_expression)) {
+    res.status(400).json({ error: `Invalid cron expression: "${cron_expression}"` });
+    return;
+  }
+
+  const id = createCronJob(name, prompt, cron_expression, notify_telegram ?? false);
+  rescheduleJob(id);
+  const job = getCronJob(id);
+  broadcastCronEvent("cron.job.created", { ...(job ?? { id, name }) });
+  res.json(job ?? { id, name });
+});
+
+// Update a cron job
+app.put("/cron/:id", (req: Request, res: Response) => {
+  const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid job ID" });
+    return;
+  }
+  const job = getCronJob(id);
+  if (!job) {
+    res.status(404).json({ error: `Cron job #${id} not found` });
+    return;
+  }
+
+  const { name, prompt, cron_expression, enabled, notify_telegram } = req.body as {
+    name?: string;
+    prompt?: string;
+    cron_expression?: string;
+    enabled?: boolean;
+    notify_telegram?: boolean;
+  };
+
+  if (cron_expression && !validateCronExpression(cron_expression)) {
+    res.status(400).json({ error: `Invalid cron expression: "${cron_expression}"` });
+    return;
+  }
+
+  updateCronJob(id, { name, prompt, cron_expression, enabled, notify_telegram });
+  rescheduleJob(id);
+  const updated = getCronJob(id);
+  broadcastCronEvent("cron.job.updated", { ...(updated ?? { id }) });
+  res.json(updated);
+});
+
+// Delete a cron job
+app.delete("/cron/:id", (req: Request, res: Response) => {
+  const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid job ID" });
+    return;
+  }
+  const job = getCronJob(id);
+  if (!job) {
+    res.status(404).json({ error: `Cron job #${id} not found` });
+    return;
+  }
+  unscheduleJob(id);
+  deleteCronJob(id);
+  broadcastCronEvent("cron.job.deleted", { id, name: job.name });
+  res.json({ ok: true, id });
+});
+
+// Toggle a cron job enabled/disabled
+app.post("/cron/:id/toggle", (req: Request, res: Response) => {
+  const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid job ID" });
+    return;
+  }
+  const job = getCronJob(id);
+  if (!job) {
+    res.status(404).json({ error: `Cron job #${id} not found` });
+    return;
+  }
+  const newEnabled = !job.enabled;
+  updateCronJob(id, { enabled: newEnabled });
+  rescheduleJob(id);
+  const updated = getCronJob(id);
+  broadcastCronEvent("cron.job.updated", { ...(updated ?? { id }) });
+  res.json(updated);
+});
+
+// Get execution history for a specific job
+app.get("/cron/:id/history", (req: Request, res: Response) => {
+  const id = Number(Array.isArray(req.params.id) ? req.params.id[0] : req.params.id);
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "Invalid job ID" });
+    return;
+  }
+  const requestedLimit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+  const limit = Number.isFinite(requestedLimit) ? Math.max(1, Math.min(requestedLimit, 200)) : 50;
+  const executions = getCronExecutions(id, limit);
+  res.json(executions);
+});
+
 // Capabilities manifest (fetched once on connect)
 app.get("/capabilities", (_req: Request, res: Response) => {
   const identity = getEffectiveIdentity();
@@ -784,6 +935,7 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     { command: "/clear", name: "Clear", description: "Clear conversation and start a new session", type: "builtIn" },
     { command: "/new", name: "New session", description: "Clear conversation and start a new session", type: "builtIn" },
     { command: "/restart", name: "Restart", description: "Restart the daemon", type: "builtIn" },
+    { command: "/cron", name: "Schedule task", description: "Schedule a recurring task", type: "builtIn", usage: "/cron <natural language schedule + task>" },
   ];
 
   // Add skill-based slash commands
@@ -992,6 +1144,20 @@ export function broadcastToSSE(text: string): void {
 export function broadcastClearedEvent(): void {
   for (const [, res] of sseClients) {
     res.write(encodeSseEvent(createClearedEvent()));
+  }
+}
+
+/** Broadcast a cron event to all SSE clients. */
+export function broadcastCronEvent(
+  eventName: "cron.job.created" | "cron.job.updated" | "cron.job.deleted" | "cron.execution.started" | "cron.execution.complete",
+  data: Record<string, unknown>,
+): void {
+  const isJobEvent = eventName.startsWith("cron.job.");
+  const event = isJobEvent
+    ? createCronJobEvent(eventName as "cron.job.created" | "cron.job.updated" | "cron.job.deleted", data)
+    : createCronExecutionEvent(eventName as "cron.execution.started" | "cron.execution.complete", data);
+  for (const [, res] of sseClients) {
+    res.write(encodeSseEvent(event as any));
   }
 }
 

@@ -1,0 +1,293 @@
+@inject AppState State
+@inject ApiClient Api
+@implements IDisposable
+
+<div class="cron-pane">
+    <div class="cron-jobs-section">
+        <div class="cron-section-header">Scheduled Tasks</div>
+        @if (State.CronJobs.Count == 0)
+        {
+            <div class="empty-state">
+                No scheduled tasks. Use <code>/cron</code> to create one.
+            </div>
+        }
+        else
+        {
+            <div class="cron-job-list">
+                @foreach (var job in State.CronJobs)
+                {
+                    var isSelected = State.SelectedCronJobId == job.Id;
+                    <div class="cron-job-row @(isSelected ? "selected" : "")"
+                         @onclick="() => SelectJob(job.Id)">
+                        <div class="cron-job-toggle">
+                            <button class="toggle-btn @(job.Enabled ? "on" : "off")"
+                                    title="@(job.Enabled ? "Disable" : "Enable")"
+                                    @onclick="() => ToggleJob(job.Id)"
+                                    @onclick:stopPropagation="true">
+                                @(job.Enabled ? "ON" : "OFF")
+                            </button>
+                        </div>
+                        <div class="cron-job-info">
+                            <div class="cron-job-name">@job.Name</div>
+                            <div class="cron-job-expr">@job.CronExpression</div>
+                        </div>
+                        <div class="cron-job-status">
+                            @if (job.LastStatus is not null)
+                            {
+                                <span class="cron-status-badge @job.LastStatus">@job.LastStatus</span>
+                            }
+                            @if (job.LastRunAt is not null)
+                            {
+                                <span class="cron-last-run">@FormatAge(job.LastRunAt)</span>
+                            }
+                        </div>
+                        <div class="cron-job-actions">
+                            <button class="cron-delete-btn"
+                                    title="Delete"
+                                    @onclick="() => DeleteJob(job.Id)"
+                                    @onclick:stopPropagation="true">
+                                X
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+
+    @if (SelectedJob is not null)
+    {
+        <div class="cron-detail-section">
+            <div class="cron-section-header">
+                Details
+                <button class="cron-filter-clear" @onclick="ClearFilter">x</button>
+            </div>
+            <div class="cron-detail-body">
+                <div class="cron-detail-row">
+                    <span class="cron-detail-label">Prompt</span>
+                    <span class="cron-detail-value cron-detail-prompt">@SelectedJob.Prompt</span>
+                </div>
+                <div class="cron-detail-row">
+                    <span class="cron-detail-label">Schedule</span>
+                    <span class="cron-detail-value"><code>@SelectedJob.CronExpression</code> @CronHumanReadable(SelectedJob.CronExpression)</span>
+                </div>
+                <div class="cron-detail-row">
+                    <span class="cron-detail-label">Status</span>
+                    <span class="cron-detail-value">
+                        @if (SelectedJob.Enabled)
+                        {
+                            <span class="cron-status-badge success">enabled</span>
+                        }
+                        else
+                        {
+                            <span class="cron-status-badge failure">disabled</span>
+                        }
+                    </span>
+                </div>
+                <div class="cron-detail-row">
+                    <span class="cron-detail-label">Runs</span>
+                    <span class="cron-detail-value">@SelectedJob.RunCount total</span>
+                </div>
+                @if (SelectedJob.LastRunAt is not null)
+                {
+                    <div class="cron-detail-row">
+                        <span class="cron-detail-label">Last run</span>
+                        <span class="cron-detail-value">
+                            @FormatDateTime(SelectedJob.LastRunAt)
+                            @if (SelectedJob.LastStatus is not null)
+                            {
+                                <span class="cron-status-badge @SelectedJob.LastStatus">@SelectedJob.LastStatus</span>
+                            }
+                        </span>
+                    </div>
+                }
+                <div class="cron-detail-row">
+                    <span class="cron-detail-label">Telegram</span>
+                    <span class="cron-detail-value">@(SelectedJob.NotifyTelegram ? "Notifications on" : "Off")</span>
+                </div>
+                @if (SelectedJob.CreatedAt is not null)
+                {
+                    <div class="cron-detail-row">
+                        <span class="cron-detail-label">Created</span>
+                        <span class="cron-detail-value">@FormatDateTime(SelectedJob.CreatedAt)</span>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="cron-executions-section">
+        <div class="cron-section-header">
+            Execution Log
+            @if (State.SelectedCronJobId is not null)
+            {
+                var selectedJob = State.CronJobs.Find(j => j.Id == State.SelectedCronJobId);
+                if (selectedJob is not null)
+                {
+                    <span class="cron-filter-label">
+                        — @selectedJob.Name
+                        <button class="cron-filter-clear" @onclick="ClearFilter">x</button>
+                    </span>
+                }
+            }
+        </div>
+        @if (State.CronExecutions.Count == 0)
+        {
+            <div class="empty-state">No executions yet.</div>
+        }
+        else
+        {
+            <div class="cron-execution-list">
+                @foreach (var exec in State.CronExecutions)
+                {
+                    var jobName = State.CronJobs.Find(j => j.Id == exec.JobId)?.Name ?? $"#{exec.JobId}";
+                    <div class="cron-execution-row">
+                        <span class="cron-exec-time">@FormatTime(exec.StartedAt)</span>
+                        <span class="cron-exec-job">@jobName</span>
+                        <span class="cron-status-badge @exec.Status">
+                            @(exec.Status == "success" ? "OK" : exec.Status == "failure" ? "FAIL" : "...")
+                        </span>
+                        @if (exec.DurationMs.HasValue)
+                        {
+                            <span class="cron-exec-duration">@FormatDuration(exec.DurationMs.Value)</span>
+                        }
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private CronJob? SelectedJob =>
+        State.SelectedCronJobId is not null
+            ? State.CronJobs.Find(j => j.Id == State.SelectedCronJobId)
+            : null;
+
+    protected override void OnInitialized()
+    {
+        State.OnStateChanged += HandleStateChanged;
+    }
+
+    private void HandleStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectJob(int jobId)
+    {
+        State.SelectedCronJobId = State.SelectedCronJobId == jobId ? null : jobId;
+        await FetchExecutionsAsync();
+        State.NotifyStateChanged();
+    }
+
+    private void ClearFilter()
+    {
+        State.SelectedCronJobId = null;
+        _ = FetchExecutionsAsync();
+        State.NotifyStateChanged();
+    }
+
+    private async Task ToggleJob(int jobId)
+    {
+        await Api.ToggleCronJobAsync(jobId);
+        var jobs = await Api.GetCronJobsAsync();
+        State.CronJobs = jobs;
+        State.NotifyStateChanged();
+    }
+
+    private async Task DeleteJob(int jobId)
+    {
+        await Api.DeleteCronJobAsync(jobId);
+        if (State.SelectedCronJobId == jobId)
+            State.SelectedCronJobId = null;
+        var jobs = await Api.GetCronJobsAsync();
+        State.CronJobs = jobs;
+        await FetchExecutionsAsync();
+        State.NotifyStateChanged();
+    }
+
+    private async Task FetchExecutionsAsync()
+    {
+        var executions = await Api.GetCronHistoryAsync(State.SelectedCronJobId);
+        State.CronExecutions = executions;
+    }
+
+    private static string FormatAge(string? dateStr)
+    {
+        if (string.IsNullOrEmpty(dateStr)) return "";
+        if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
+        var ago = DateTime.UtcNow - dt;
+        if (ago.TotalMinutes < 1) return "just now";
+        if (ago.TotalHours < 1) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalDays < 1) return $"{(int)ago.TotalHours}h ago";
+        return $"{(int)ago.TotalDays}d ago";
+    }
+
+    private static string FormatTime(string? dateStr)
+    {
+        if (string.IsNullOrEmpty(dateStr)) return "";
+        if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
+        return dt.ToLocalTime().ToString("HH:mm");
+    }
+
+    private static string FormatDuration(int ms)
+    {
+        if (ms < 1000) return $"{ms}ms";
+        return $"{ms / 1000.0:F1}s";
+    }
+
+    private static string FormatDateTime(string? dateStr)
+    {
+        if (string.IsNullOrEmpty(dateStr)) return "";
+        if (!DateTime.TryParse(dateStr, out var dt)) return dateStr;
+        return dt.ToLocalTime().ToString("yyyy-MM-dd HH:mm");
+    }
+
+    private static string CronHumanReadable(string expr)
+    {
+        var parts = expr.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length < 5) return "";
+
+        var (min, hour, dom, mon, dow) = (parts[0], parts[1], parts[2], parts[3], parts[4]);
+
+        // Every minute
+        if (min == "*" && hour == "*" && dom == "*" && mon == "*" && dow == "*")
+            return "(every minute)";
+
+        // Every N minutes
+        if (min.StartsWith("*/") && hour == "*" && dom == "*" && mon == "*" && dow == "*")
+            return $"(every {min[2..]} minutes)";
+
+        // Every hour at :MM
+        if (!min.Contains('*') && hour == "*" && dom == "*" && mon == "*" && dow == "*")
+            return $"(hourly at :{min.PadLeft(2, '0')})";
+
+        // Daily at HH:MM
+        if (!min.Contains('*') && !hour.Contains('*') && dom == "*" && mon == "*" && dow == "*")
+            return $"(daily at {hour.PadLeft(2, '0')}:{min.PadLeft(2, '0')})";
+
+        // Weekdays at HH:MM
+        if (!min.Contains('*') && !hour.Contains('*') && dom == "*" && mon == "*" && dow == "1-5")
+            return $"(weekdays at {hour.PadLeft(2, '0')}:{min.PadLeft(2, '0')})";
+
+        // Weekly (specific day)
+        if (!min.Contains('*') && !hour.Contains('*') && dom == "*" && mon == "*" && !dow.Contains('*'))
+        {
+            var dayName = dow switch
+            {
+                "0" => "Sunday", "1" => "Monday", "2" => "Tuesday",
+                "3" => "Wednesday", "4" => "Thursday", "5" => "Friday",
+                "6" => "Saturday", _ => $"day {dow}"
+            };
+            return $"(every {dayName} at {hour.PadLeft(2, '0')}:{min.PadLeft(2, '0')})";
+        }
+
+        return "";
+    }
+
+    public void Dispose()
+    {
+        State.OnStateChanged -= HandleStateChanged;
+    }
+}

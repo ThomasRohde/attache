@@ -384,6 +384,53 @@ public class ApiClient : IDisposable
         catch { return []; }
     }
 
+    public async Task<List<CronJob>> GetCronJobsAsync()
+    {
+        RefreshConnection();
+        try
+        {
+            var json = await _http.GetStringAsync("/cron");
+            return JsonSerializer.Deserialize<List<CronJob>>(json, JsonOpts) ?? [];
+        }
+        catch { return []; }
+    }
+
+    public async Task<bool> ToggleCronJobAsync(int id)
+    {
+        RefreshConnection();
+        try
+        {
+            var resp = await _http.PostAsync($"/cron/{id}/toggle", null);
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task<bool> DeleteCronJobAsync(int id)
+    {
+        RefreshConnection();
+        try
+        {
+            var resp = await _http.DeleteAsync($"/cron/{id}");
+            return resp.IsSuccessStatusCode;
+        }
+        catch { return false; }
+    }
+
+    public async Task<List<CronExecution>> GetCronHistoryAsync(int? jobId = null, int limit = 50)
+    {
+        RefreshConnection();
+        try
+        {
+            var url = jobId.HasValue
+                ? $"/cron/{jobId}/history?limit={limit}"
+                : $"/cron/history?limit={limit}";
+            var json = await _http.GetStringAsync(url);
+            return JsonSerializer.Deserialize<List<CronExecution>>(json, JsonOpts) ?? [];
+        }
+        catch { return []; }
+    }
+
     public async Task PostRestartAsync()
     {
         RefreshConnection();

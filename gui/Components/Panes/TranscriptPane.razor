@@ -29,7 +29,11 @@
         </div>
     }
     <div class="pane-body transcript-body" id="transcript-scroll">
-        @if (State.ViewingOrchestrator)
+        @if (State.ViewingOrchestrator && State.SelectedChannel == "cron")
+        {
+            <CronPane />
+        }
+        else if (State.ViewingOrchestrator)
         {
             @* ── Orchestrator transcript ── *@
             @if (TranscriptSnapshot.Count == 0 && State.StreamingContent is null)
@@ -114,6 +118,7 @@
     {
         ["tui"] = "GUI",
         ["telegram"] = "TELE",
+        ["cron"] = "CRON",
     };
 
     private static string ChannelLabel(string source) =>
@@ -123,7 +128,8 @@
     {
         "tui" => 0,
         "telegram" => 1,
-        _ => 2,
+        "cron" => 2,
+        _ => 3,
     };
 
     private int _lastEntryCount;

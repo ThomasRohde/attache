@@ -6,9 +6,14 @@ export type ApiEventName =
   | "orchestrator.message.complete"
   | "orchestrator.message.cancelled"
   | "transcript.entry"
-  | "session.cleared";
+  | "session.cleared"
+  | "cron.job.created"
+  | "cron.job.updated"
+  | "cron.job.deleted"
+  | "cron.execution.started"
+  | "cron.execution.complete";
 
-export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript" | "cleared";
+export type LegacyApiEventType = "connected" | "delta" | "message" | "cancelled" | "transcript" | "cleared" | "cron";
 
 type ConnectedData = { connectionId: string };
 type MessageData = { content: string };
@@ -64,6 +69,23 @@ export function createClearedEvent(): ApiEventEnvelope<EmptyData> {
 
 export function createTranscriptEvent(role: string, content: string, source: string): ApiEventEnvelope<TranscriptData> {
   return withEnvelope("transcript.entry", "transcript", { role, content, source });
+}
+
+type CronJobData = { job: Record<string, unknown> };
+type CronExecutionData = { execution: Record<string, unknown> };
+
+export function createCronJobEvent(
+  eventName: "cron.job.created" | "cron.job.updated" | "cron.job.deleted",
+  job: Record<string, unknown>,
+): ApiEventEnvelope<CronJobData> {
+  return withEnvelope(eventName, "cron", { job });
+}
+
+export function createCronExecutionEvent(
+  eventName: "cron.execution.started" | "cron.execution.complete",
+  execution: Record<string, unknown>,
+): ApiEventEnvelope<CronExecutionData> {
+  return withEnvelope(eventName, "cron", { execution });
 }
 
 export function encodeSseEvent(event: ApiEventEnvelope<Record<string, unknown>>): string {

@@ -10,6 +10,8 @@ import { listSkills, createSkill, removeSkill, updateSkill, readSkill } from "./
 import { config, persistModel } from "../config.js";
 import { SESSIONS_DIR } from "../paths.js";
 import { getCurrentSourceChannel } from "./orchestrator.js";
+import { createCronJob as dbCreateCronJob, getCronJobs, updateCronJob, deleteCronJob } from "../store/db.js";
+import { validateCronExpression, rescheduleJob, unscheduleJob } from "../cron/scheduler.js";
 
 export const TOOL_REGISTRY: { name: string; description: string; category: string }[] = [
   { name: "create_worker_session", description: "Create a new worker session in a specific directory", category: "workers" },
@@ -31,6 +33,10 @@ export const TOOL_REGISTRY: { name: string; description: string; category: strin
   { name: "recall", description: "Search long-term memory for stored information", category: "memory" },
   { name: "forget", description: "Remove a specific memory from long-term storage", category: "memory" },
   { name: "restart_attache", description: "Restart the Attache daemon process", category: "system" },
+  { name: "schedule_task", description: "Create a recurring scheduled task", category: "cron" },
+  { name: "list_schedules", description: "List all scheduled tasks with status", category: "cron" },
+  { name: "update_schedule", description: "Modify an existing scheduled task", category: "cron" },
+  { name: "remove_schedule", description: "Delete a scheduled task", category: "cron" },
 ];
 
 function isTimeoutError(err: unknown): boolean {
@@ -508,6 +514,98 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         return removed
           ? `Memory #${args.memory_id} forgotten.`
           : `Memory #${args.memory_id} not found — it may have already been removed.`;
+      },
+    }),
+
+    defineTool("schedule_task", {
+      description:
+        "Create a recurring scheduled task that runs on a cron schedule. " +
+        "Use when the user wants something to happen periodically (daily reports, hourly checks, etc.).",
+      parameters: z.object({
+        name: z.string().describe("Short descriptive name for the task, e.g. 'morning-report'"),
+        prompt: z.string().describe("The prompt to send to the orchestrator when the task fires"),
+        cron_expression: z.string().describe("Standard cron expression (5 fields: minute hour day month weekday)"),
+        notify_telegram: z.boolean().optional().describe("Whether to send results to Telegram (default: false)"),
+      }),
+      handler: async (args) => {
+        if (!validateCronExpression(args.cron_expression)) {
+          return `Invalid cron expression: "${args.cron_expression}". Use 5-field format: minute hour day month weekday. Examples: "0 8 * * *" (daily at 8am), "0 * * * *" (every hour), "*/15 * * * *" (every 15 minutes).`;
+        }
+        const id = dbCreateCronJob(args.name, args.prompt, args.cron_expression, args.notify_telegram);
+        rescheduleJob(id);
+        // Broadcast SSE event
+        const { broadcastCronEvent } = await import("../api/server.js");
+        broadcastCronEvent("cron.job.created", { id, name: args.name, cron_expression: args.cron_expression, enabled: true });
+        return `Scheduled task "${args.name}" created (#${id}). It will run on schedule: ${args.cron_expression}`;
+      },
+    }),
+
+    defineTool("list_schedules", {
+      description: "List all scheduled tasks with their status, last run time, and cron expression.",
+      parameters: z.object({}),
+      handler: async () => {
+        const jobs = getCronJobs();
+        if (jobs.length === 0) {
+          return "No scheduled tasks. Use schedule_task to create one.";
+        }
+        const lines = jobs.map((j) => {
+          const status = j.enabled ? "enabled" : "disabled";
+          const lastRun = j.last_run_at ? `last run: ${j.last_run_at}` : "never run";
+          const lastResult = j.last_status ? ` (${j.last_status})` : "";
+          return `• #${j.id} "${j.name}" [${status}] — ${j.cron_expression} — ${lastRun}${lastResult} — ${j.run_count} runs`;
+        });
+        return `Scheduled tasks (${jobs.length}):\n${lines.join("\n")}`;
+      },
+    }),
+
+    defineTool("update_schedule", {
+      description: "Modify an existing scheduled task. Can change its name, prompt, schedule, or enabled state.",
+      parameters: z.object({
+        job_id: z.number().int().describe("The job ID to update"),
+        name: z.string().optional().describe("New name"),
+        prompt: z.string().optional().describe("New prompt"),
+        cron_expression: z.string().optional().describe("New cron expression"),
+        enabled: z.boolean().optional().describe("Enable or disable the job"),
+        notify_telegram: z.boolean().optional().describe("Enable or disable Telegram notifications"),
+      }),
+      handler: async (args) => {
+        const { getCronJob: getJob } = await import("../store/db.js");
+        const job = getJob(args.job_id);
+        if (!job) return `No scheduled task with ID #${args.job_id}.`;
+
+        if (args.cron_expression && !validateCronExpression(args.cron_expression)) {
+          return `Invalid cron expression: "${args.cron_expression}".`;
+        }
+
+        updateCronJob(args.job_id, {
+          name: args.name,
+          prompt: args.prompt,
+          cron_expression: args.cron_expression,
+          enabled: args.enabled,
+          notify_telegram: args.notify_telegram,
+        });
+        rescheduleJob(args.job_id);
+        const { broadcastCronEvent } = await import("../api/server.js");
+        broadcastCronEvent("cron.job.updated", { id: args.job_id, name: args.name ?? job.name });
+        return `Scheduled task #${args.job_id} "${args.name ?? job.name}" updated.`;
+      },
+    }),
+
+    defineTool("remove_schedule", {
+      description: "Delete a scheduled task permanently.",
+      parameters: z.object({
+        job_id: z.number().int().describe("The job ID to remove"),
+      }),
+      handler: async (args) => {
+        const { getCronJob: getJob } = await import("../store/db.js");
+        const job = getJob(args.job_id);
+        if (!job) return `No scheduled task with ID #${args.job_id}.`;
+
+        unscheduleJob(args.job_id);
+        deleteCronJob(args.job_id);
+        const { broadcastCronEvent } = await import("../api/server.js");
+        broadcastCronEvent("cron.job.deleted", { id: args.job_id, name: job.name });
+        return `Scheduled task #${args.job_id} "${job.name}" deleted.`;
       },
     }),
 
