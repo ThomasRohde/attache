@@ -141,15 +141,26 @@
                 @foreach (var exec in State.CronExecutions)
                 {
                     var jobName = State.CronJobs.Find(j => j.Id == exec.JobId)?.Name ?? $"#{exec.JobId}";
-                    <div class="cron-execution-row">
-                        <span class="cron-exec-time">@FormatTime(exec.StartedAt)</span>
-                        <span class="cron-exec-job">@jobName</span>
-                        <span class="cron-status-badge @exec.Status">
-                            @(exec.Status == "success" ? "OK" : exec.Status == "failure" ? "FAIL" : "...")
-                        </span>
-                        @if (exec.DurationMs.HasValue)
+                    var isExpanded = _expandedExecutionId == exec.Id;
+                    <div class="cron-execution-entry">
+                        <div class="cron-execution-row @(isExpanded ? "expanded" : "")"
+                             @onclick="() => ToggleExecution(exec.Id)">
+                            <span class="cron-exec-time">@FormatTime(exec.StartedAt)</span>
+                            <span class="cron-exec-job">@jobName</span>
+                            <span class="cron-status-badge @exec.Status">
+                                @(exec.Status == "success" ? "OK" : exec.Status == "failure" ? "FAIL" : "...")
+                            </span>
+                            @if (exec.DurationMs.HasValue)
+                            {
+                                <span class="cron-exec-duration">@FormatDuration(exec.DurationMs.Value)</span>
+                            }
+                            <span class="cron-exec-expand">@(isExpanded ? "v" : ">")</span>
+                        </div>
+                        @if (isExpanded && !string.IsNullOrEmpty(exec.Result))
                         {
-                            <span class="cron-exec-duration">@FormatDuration(exec.DurationMs.Value)</span>
+                            <div class="cron-exec-result">
+                                <MarkdownBlock Content="@exec.Result" />
+                            </div>
                         }
                     </div>
                 }
@@ -159,6 +170,8 @@
 </div>
 
 @code {
+    private int? _expandedExecutionId;
+
     private CronJob? SelectedJob =>
         State.SelectedCronJobId is not null
             ? State.CronJobs.Find(j => j.Id == State.SelectedCronJobId)
@@ -205,6 +218,11 @@
         State.CronJobs = jobs;
         await FetchExecutionsAsync();
         State.NotifyStateChanged();
+    }
+
+    private void ToggleExecution(int execId)
+    {
+        _expandedExecutionId = _expandedExecutionId == execId ? null : execId;
     }
 
     private async Task FetchExecutionsAsync()

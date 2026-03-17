@@ -9,7 +9,7 @@ import {
   type CronJob,
 } from "../store/db.js";
 import { sendToOrchestrator } from "../copilot/orchestrator.js";
-import { broadcastTranscriptEntry, broadcastCronEvent } from "../api/server.js";
+import { broadcastToSSE, broadcastTranscriptEntry, broadcastCronEvent } from "../api/server.js";
 import { config } from "../config.js";
 import { LOG_PREFIX } from "../identity.js";
 
@@ -108,15 +108,23 @@ async function executeJob(jobId: number): Promise<void> {
       // Log to conversation
       logConversation("assistant", text, "cron");
 
-      // Broadcast completion via transcript and cron event
+      // Broadcast completion via transcript (cron channel) and cron event
       broadcastTranscriptEntry("assistant", text, "cron");
       broadcastCronEvent("cron.execution.complete", { id: executionId, jobId, jobName: job.name, status, durationMs });
 
-      // Telegram notification if enabled
-      if (job.notify_telegram && config.telegramEnabled) {
+      // Notify the user in the GUI — proactive message visible on the tui channel
+      const summary = `**[${job.name}]** ${text}`;
+      broadcastToSSE(summary);
+
+      // Telegram notification — always send if telegram is enabled
+      if (config.telegramEnabled) {
         import("../telegram/bot.js").then(({ sendProactiveMessage }) => {
-          sendProactiveMessage(`[${job.name}] ${text}`).catch(() => {});
-        }).catch(() => {});
+          sendProactiveMessage(`[${job.name}] ${text}`).catch((err) => {
+            console.error(`${LOG_PREFIX} [cron] Telegram send failed for job #${jobId}:`, err);
+          });
+        }).catch((err) => {
+          console.error(`${LOG_PREFIX} [cron] Failed to import telegram bot:`, err);
+        });
       }
 
       console.log(`${LOG_PREFIX} [cron] Job #${jobId} "${job.name}" ${status} in ${durationMs}ms`);
