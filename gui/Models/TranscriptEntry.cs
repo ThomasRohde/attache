@@ -9,6 +9,7 @@ public class TranscriptEntry
     public string Source { get; set; } = "tui";
     public DateTime Timestamp { get; set; } = DateTime.Now;
     public RouteInfo? Route { get; set; }
+    public List<AttachmentInfo>? Attachments { get; set; }
 }
 
 public class RouteInfo

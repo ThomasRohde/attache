@@ -43,7 +43,25 @@
                 }
             </div>
         }
+        @if (_pendingAttachments.Count > 0)
+        {
+            <div class="attachment-preview">
+                @foreach (var att in _pendingAttachments)
+                {
+                    var a = att;
+                    <div class="attachment-chip">
+                        @if (a.IsImage && a.ThumbnailDataUri is not null)
+                        {
+                            <img class="attachment-thumb" src="@a.ThumbnailDataUri" alt="@a.FileName" />
+                        }
+                        <span class="attachment-name">@a.FileName</span>
+                        <button class="attachment-remove" @onclick="() => RemoveAttachment(a)">✕</button>
+                    </div>
+                }
+            </div>
+        }
         <div style="display: flex; gap: 8px; align-items: flex-end;">
+            <button class="attach-btn" @onclick="PickFilesAsync" title="Attach files" disabled="@(!Sse.IsConnected)">+</button>
             <textarea @oninput="OnInputChanged"
                       @ref="_textareaRef"
                       placeholder="Type a message... (/ for commands)"
@@ -74,6 +92,16 @@
     private string _activeCommand = "";
     private DotNetObjectReference<ComposerPane>? _dotnetRef;
     private List<ParamOption>? _cachedModelParams;
+    private List<AttachmentInfo> _pendingAttachments = [];
+
+    private static readonly string UploadsDir = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".attache", "uploads");
+
+    private static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"
+    };
 
     private record ParamOption(string Id, string Label);
 
@@ -84,7 +112,7 @@
         _ => "disconnected"
     };
 
-    private bool CanSend => Sse.IsConnected && !string.IsNullOrWhiteSpace(_input) && !State.IsProcessing;
+    private bool CanSend => Sse.IsConnected && (!string.IsNullOrWhiteSpace(_input) || _pendingAttachments.Count > 0) && !State.IsProcessing;
 
     protected override void OnInitialized()
     {
@@ -313,7 +341,7 @@
     private async Task SendFromButtonAsync()
     {
         var text = _input.Trim();
-        if (string.IsNullOrEmpty(text)) return;
+        if (string.IsNullOrEmpty(text) && _pendingAttachments.Count == 0) return;
         await DoSend(text);
     }
 
@@ -323,13 +351,15 @@
         _showSlashMenu = false;
         _showParamMenu = false;
         _filteredParams = [];
+        var attachments = _pendingAttachments.Count > 0 ? new List<AttachmentInfo>(_pendingAttachments) : null;
+        _pendingAttachments.Clear();
         await JS.InvokeVoidAsync("attache.clearComposer", _textareaRef);
-        State.AddUserMessage(text);
+        State.AddUserMessage(text, "tui", attachments);
 
         var connectionId = Sse.ConnectionId;
         if (connectionId is not null)
         {
-            var sent = await Api.SendMessageAsync(text, connectionId);
+            var sent = await Api.SendMessageAsync(text, connectionId, attachments);
             if (sent)
             {
                 return;
@@ -337,6 +367,123 @@
         }
 
         State.HandleSendFailure("Failed to send message. The daemon may be restarting or the connection expired.");
+    }
+
+    private async Task PickFilesAsync()
+    {
+        try
+        {
+            var dialog = new OpenFileDialog
+            {
+                Multiselect = true,
+                Title = "Attach files",
+                Filter = "All files (*.*)|*.*|Images (*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp)|*.png;*.jpg;*.jpeg;*.gif;*.webp;*.bmp",
+            };
+            if (dialog.ShowDialog() == DialogResult.OK)
+            {
+                foreach (var path in dialog.FileNames)
+                {
+                    StageFile(path);
+                }
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // File dialog may fail in some environments
+        }
+    }
+
+    private void StageFile(string originalPath)
+    {
+        try
+        {
+            Directory.CreateDirectory(UploadsDir);
+            var ext = Path.GetExtension(originalPath);
+            var stagedName = $"{Guid.NewGuid()}{ext}";
+            var stagedPath = Path.Combine(UploadsDir, stagedName);
+            File.Copy(originalPath, stagedPath, overwrite: true);
+            var isImage = ImageExtensions.Contains(ext);
+            string? thumbUri = null;
+            if (isImage)
+            {
+                try
+                {
+                    var bytes = File.ReadAllBytes(stagedPath);
+                    var mime = ext.ToLowerInvariant() switch
+                    {
+                        ".png" => "image/png",
+                        ".gif" => "image/gif",
+                        ".webp" => "image/webp",
+                        ".bmp" => "image/bmp",
+                        ".svg" => "image/svg+xml",
+                        _ => "image/jpeg",
+                    };
+                    thumbUri = $"data:{mime};base64,{Convert.ToBase64String(bytes)}";
+                }
+                catch { /* non-fatal */ }
+            }
+            _pendingAttachments.Add(new AttachmentInfo
+            {
+                OriginalPath = originalPath,
+                StagedPath = stagedPath,
+                FileName = Path.GetFileName(originalPath),
+                IsImage = isImage,
+                ThumbnailDataUri = thumbUri,
+            });
+        }
+        catch
+        {
+            // Best effort — skip files that can't be staged
+        }
+    }
+
+    private void RemoveAttachment(AttachmentInfo att)
+    {
+        _pendingAttachments.Remove(att);
+        try { File.Delete(att.StagedPath); } catch { }
+        StateHasChanged();
+    }
+
+    [JSInvokable("JsFilesDropped")]
+    public void HandleFilesDropped(string[] paths)
+    {
+        foreach (var path in paths)
+        {
+            StageFile(path);
+        }
+        InvokeAsync(StateHasChanged);
+    }
+
+    [JSInvokable("JsImagePasted")]
+    public void HandleImagePasted(string base64Data, string extension)
+    {
+        try
+        {
+            Directory.CreateDirectory(UploadsDir);
+            var fileName = $"paste-{DateTime.Now:yyyyMMdd-HHmmss}.{extension}";
+            var stagedPath = Path.Combine(UploadsDir, $"{Guid.NewGuid()}.{extension}");
+            var bytes = Convert.FromBase64String(base64Data);
+            File.WriteAllBytes(stagedPath, bytes);
+            var mime = extension switch
+            {
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "bmp" => "image/bmp",
+                _ => "image/jpeg",
+            };
+            _pendingAttachments.Add(new AttachmentInfo
+            {
+                OriginalPath = stagedPath,
+                StagedPath = stagedPath,
+                FileName = fileName,
+                IsImage = true,
+                ThumbnailDataUri = $"data:{mime};base64,{base64Data}",
+            });
+            InvokeAsync(StateHasChanged);
+        }
+        catch { /* best-effort */ }
     }
 
     private async Task CancelAsync()

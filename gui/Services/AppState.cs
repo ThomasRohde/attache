@@ -46,7 +46,7 @@ public class AppState
 
     public void NotifyStateChanged() => OnStateChanged?.Invoke();
 
-    public void AddUserMessage(string content, string source = "tui")
+    public void AddUserMessage(string content, string source = "tui", List<AttachmentInfo>? attachments = null)
     {
         TranscriptEntries.Add(new TranscriptEntry
         {
@@ -54,6 +54,7 @@ public class AppState
             Content = content,
             Source = source,
             Timestamp = DateTime.Now,
+            Attachments = attachments,
         });
         IsProcessing = true;
         NotifyStateChanged();

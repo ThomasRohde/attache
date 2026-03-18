@@ -1,5 +1,6 @@
 import type { CodexBackendClient, NotificationHandler } from "./index.js";
 import type {
+  Attachment,
   BackendSession,
   SendResult,
   SessionConfig,
@@ -43,8 +44,14 @@ export class CodexBackendSession implements BackendSession {
     return this._threadId;
   }
 
-  async sendAndWait(prompt: string, timeoutMs?: number): Promise<SendResult> {
+  async sendAndWait(prompt: string, timeoutMs?: number, attachments?: Attachment[]): Promise<SendResult> {
     if (this._destroyed) throw new Error("Session is destroyed");
+
+    // Text fallback for attachments (Codex backend doesn't support native file attachments)
+    if (attachments?.length) {
+      const listing = attachments.map(a => `[Attached file: ${a.displayName || a.path}] (${a.path})`).join("\n");
+      prompt = `${prompt}\n\n${listing}`;
+    }
 
     // Start or resume thread on first turn
     if (!this._threadStarted) {

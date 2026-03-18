@@ -10,10 +10,11 @@ import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearC
 import { listSkills, removeSkill, updateSkill, readSkill } from "../copilot/skills.js";
 import { restartDaemon, shutdownDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
-import { API_TOKEN_PATH, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
+import { API_TOKEN_PATH, ATTACHE_UPLOADS_DIR, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
 import { join, sep, resolve } from "path";
 import { homedir, tmpdir } from "os";
 import { TOOL_REGISTRY, BLOCKED_WORKER_DIRS, MAX_CONCURRENT_WORKERS, destroyWorker, type WorkerInfo } from "../copilot/tools.js";
+import type { Attachment } from "../backend/types.js";
 import { DAEMON_VERSION } from "../update.js";
 import { getBackendClient, getBackendName, getStaticModels } from "../backend/registry.js";
 import { getCurrentSourceChannel } from "../copilot/orchestrator.js";
@@ -609,10 +610,14 @@ async function handleBuiltInCommand(prompt: string): Promise<{ handled: boolean;
 
 // Send a message to the orchestrator
 app.post("/message", (req: Request, res: Response) => {
-  const { prompt, connectionId } = req.body as { prompt?: string; connectionId?: string };
+  const { prompt, connectionId, attachments: rawAttachments } = req.body as {
+    prompt?: string;
+    connectionId?: string;
+    attachments?: { path: string; name?: string }[];
+  };
 
-  if (!prompt || typeof prompt !== "string") {
-    res.status(400).json({ error: "Missing 'prompt' in request body" });
+  if ((!prompt || typeof prompt !== "string") && (!rawAttachments || rawAttachments.length === 0)) {
+    res.status(400).json({ error: "Missing 'prompt' or 'attachments' in request body" });
     return;
   }
 
@@ -621,8 +626,50 @@ app.post("/message", (req: Request, res: Response) => {
     return;
   }
 
+  // Validate and convert attachments
+  let attachments: Attachment[] | undefined;
+  if (rawAttachments && rawAttachments.length > 0) {
+    attachments = [];
+    for (const raw of rawAttachments) {
+      if (!raw.path || typeof raw.path !== "string") {
+        res.status(400).json({ error: "Each attachment must have a 'path' string" });
+        return;
+      }
+      try {
+        const resolvedPath = realpathSync(resolve(raw.path));
+        const stat = statSync(resolvedPath);
+        if (!stat.isFile()) {
+          res.status(400).json({ error: `Attachment '${raw.path}' is not a file` });
+          return;
+        }
+        // Allow files in uploads dir, workfolder, or temp dir
+        const uploadsRoot = resolve(ATTACHE_UPLOADS_DIR);
+        const allowedRoots = [uploadsRoot, resolve(process.cwd()), resolve(tmpdir())];
+        if (!allowedRoots.some((root) => isWithinDirectory(resolvedPath, root))) {
+          res.status(400).json({ error: "Attachments must be inside the uploads dir, workfolder, or temp directory" });
+          return;
+        }
+        // Block sensitive dirs, but exempt the uploads dir (which is inside ~/.attache/)
+        if (!isWithinDirectory(resolvedPath, uploadsRoot)) {
+          const home = homedir();
+          for (const blocked of BLOCKED_WORKER_DIRS) {
+            const blockedPath = resolve(home, blocked);
+            if (isWithinDirectory(resolvedPath, blockedPath)) {
+              res.status(400).json({ error: `Attachment path is in a sensitive directory (${blocked})` });
+              return;
+            }
+          }
+        }
+        attachments.push({ type: "file", path: resolvedPath, displayName: raw.name || undefined });
+      } catch (err) {
+        res.status(400).json({ error: `Invalid attachment path '${raw.path}': ${err instanceof Error ? err.message : err}` });
+        return;
+      }
+    }
+  }
+
   // Intercept built-in slash commands
-  const trimmedPrompt = prompt.trim();
+  const trimmedPrompt = (prompt || "").trim();
   if (trimmedPrompt.startsWith("/")) {
     handleBuiltInCommand(trimmedPrompt).then((builtIn) => {
         if (builtIn.handled) {
@@ -638,17 +685,17 @@ app.post("/message", (req: Request, res: Response) => {
           return;
         }
       // Not a built-in command — pass through to orchestrator
-      dispatchToOrchestrator(prompt, connectionId, res);
+      dispatchToOrchestrator(prompt || "", connectionId, res, attachments);
     }).catch(() => {
-      dispatchToOrchestrator(prompt, connectionId, res);
+      dispatchToOrchestrator(prompt || "", connectionId, res, attachments);
     });
     return;
   }
 
-  dispatchToOrchestrator(prompt, connectionId, res);
+  dispatchToOrchestrator(prompt || "", connectionId, res, attachments);
 });
 
-function dispatchToOrchestrator(prompt: string, connectionId: string, res: Response) {
+function dispatchToOrchestrator(prompt: string, connectionId: string, res: Response, attachments?: Attachment[]) {
   broadcastTranscriptEntry("user", prompt, "tui", connectionId);
 
   sendToOrchestrator(
@@ -668,7 +715,8 @@ function dispatchToOrchestrator(prompt: string, connectionId: string, res: Respo
           sseRes.write(encodeSseEvent(createDeltaEvent(text)));
         }
       }
-    }
+    },
+    attachments
   );
 
   res.json({ status: "queued" });
@@ -1084,6 +1132,7 @@ app.get("/capabilities", (_req: Request, res: Response) => {
     features: {
       telegram: config.telegramEnabled,
       selfEdit: config.selfEditEnabled,
+      vision: client.capabilities.vision,
     },
   });
 });

@@ -84,6 +84,9 @@ public class CapFeatures
 
     [JsonPropertyName("selfEdit")]
     public bool SelfEdit { get; set; }
+
+    [JsonPropertyName("vision")]
+    public bool Vision { get; set; }
 }
 
 public class CapBackend

@@ -23,6 +23,7 @@ export class CopilotBackendClient implements BackendClient {
     skillDirectories: true,
     structuredOutput: false,
     machineSessionDiscovery: true,
+    vision: true,
   };
 
   private client: CopilotClient | undefined;

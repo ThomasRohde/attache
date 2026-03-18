@@ -1,4 +1,4 @@
-import type { BackendClient, BackendSession } from "../backend/types.js";
+import type { Attachment, BackendClient, BackendSession } from "../backend/types.js";
 import { resetBackendClient, getDefaultModelForProvider } from "../backend/registry.js";
 import { createTools, TOOL_REGISTRY, type WorkerInfo } from "./tools.js";
 import { getOrchestratorSystemMessage } from "./system-message.js";
@@ -86,6 +86,7 @@ type QueuedMessage = {
   prompt: string;
   callback: MessageCallback;
   sourceChannel?: "telegram" | "tui";
+  attachments?: Attachment[];
   resolve: (value: string) => void;
   reject: (err: unknown) => void;
 };
@@ -356,7 +357,7 @@ export async function initOrchestrator(client: BackendClient): Promise<void> {
 }
 
 /** Send a prompt on the persistent session, return the response. */
-async function executeOnSession(prompt: string, callback: MessageCallback): Promise<string> {
+async function executeOnSession(prompt: string, callback: MessageCallback, attachments?: Attachment[]): Promise<string> {
   const session = await ensureOrchestratorSession();
   currentCallback = callback;
 
@@ -397,7 +398,7 @@ async function executeOnSession(prompt: string, callback: MessageCallback): Prom
   });
 
   try {
-    const result = await session.sendAndWait(prompt, 300_000);
+    const result = await session.sendAndWait(prompt, 300_000, attachments);
     const finalContent = result.content || accumulated || "(No response)";
     return finalContent;
   } catch (err) {
@@ -430,7 +431,7 @@ async function processQueue(): Promise<void> {
     const item = messageQueue.shift()!;
     currentSourceChannel = item.sourceChannel;
     try {
-      const result = await executeOnSession(item.prompt, item.callback);
+      const result = await executeOnSession(item.prompt, item.callback, item.attachments);
       item.resolve(result);
     } catch (err) {
       item.reject(err);
@@ -449,7 +450,8 @@ function isRecoverableError(err: unknown): boolean {
 export async function sendToOrchestrator(
   prompt: string,
   source: MessageSource,
-  callback: MessageCallback
+  callback: MessageCallback,
+  attachments?: Attachment[]
 ): Promise<void> {
   const sourceLabel =
     source.type === "telegram" ? "telegram" :
@@ -474,7 +476,7 @@ export async function sendToOrchestrator(
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
       try {
         const finalContent = await new Promise<string>((resolve, reject) => {
-          messageQueue.push({ prompt: taggedPrompt, callback, sourceChannel, resolve, reject });
+          messageQueue.push({ prompt: taggedPrompt, callback, sourceChannel, attachments, resolve, reject });
           processQueue();
         });
         // Deliver response to user FIRST, then log best-effort

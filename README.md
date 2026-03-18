@@ -10,7 +10,8 @@ Attache is a local AI orchestrator that runs a persistent daemon on your machine
 - Pluggable backends: Copilot SDK (default), Claude Agent SDK, OpenAI Codex
 - Blazor Hybrid desktop GUI with streaming markdown, 4-pane layout, and system tray
 - Unified conversation transcript across all channels (GUI + Telegram)
-- Optional Telegram control from your phone
+- File and image attachments across all channels (GUI, Telegram, API)
+- Optional Telegram control from your phone (including photo messages)
 - Configurable workfolder for project-scoped sessions
 - Worker session management for repo-specific coding tasks
 - Cron-based task scheduling for recurring jobs
@@ -70,6 +71,7 @@ The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorW
 
 - Streaming markdown rendering (Markdig + highlight.js)
 - Unified transcript with channel tabs (GUI, Telegram, background workers)
+- File/image attachments: `+` button, drag-and-drop, or Ctrl+V paste from clipboard
 - Worker list with status indicators, live output streaming, and selection
 - Inspector: workfolder, git branch, model, backend, process diagnostics
 - Configuration dialog: model, backend, workfolder, Telegram, display name, self-edit toggle
@@ -116,7 +118,7 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | --- | --- | --- |
 | `GET` | `/status` | Health check |
 | `GET` | `/stream` | SSE event stream |
-| `POST` | `/message` | Submit a prompt (requires active `/stream`) |
+| `POST` | `/message` | Submit a prompt with optional `attachments` (requires active `/stream`) |
 | `POST` | `/cancel` | Cancel in-flight message |
 | `GET` | `/transcript` | Conversation history |
 | `GET` | `/diagnostics` | Process, routing, and worker diagnostics |
@@ -196,6 +198,7 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | SQLite database | `~/.attache/attache.db` |
 | API bearer token | `~/.attache/api-token` |
 | Session state | `~/.attache/sessions/` |
+| File uploads | `~/.attache/uploads/` |
 | User skills | `~/.attache/skills/` |
 
 ## Architecture

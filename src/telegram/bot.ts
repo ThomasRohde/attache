@@ -1,7 +1,10 @@
 import { Bot, type Context } from "grammy";
 import { config, validateAndSwitchModel } from "../config.js";
 import { sendToOrchestrator, cancelCurrentMessage, getWorkers, resetSession } from "../copilot/orchestrator.js";
+import { ATTACHE_UPLOADS_DIR } from "../paths.js";
 import { chunkMessage, toTelegramMarkdown } from "./formatter.js";
+import { writeFileSync } from "fs";
+import { join } from "path";
 import { searchMemories, clearConversationLog } from "../store/db.js";
 import { listSkills } from "../copilot/skills.js";
 import { restartDaemon } from "../daemon.js";
@@ -141,10 +144,14 @@ export function createBot(): Bot {
     }, 500);
   });
 
-  // Handle all text messages
-  bot.on("message:text", async (ctx) => {
-    const chatId = ctx.chat.id;
-    const userMessageId = ctx.message.message_id;
+  /** Send a prompt (with optional attachments) to the orchestrator and handle typing/timeout/response. */
+  function handleIncomingMessage(
+    ctx: Context,
+    chatId: number,
+    userMessageId: number,
+    prompt: string,
+    attachments?: import("../backend/types.js").Attachment[],
+  ): void {
     const replyParams = { message_id: userMessageId };
 
     // Show "typing..." indicator, repeat every 4s while processing
@@ -164,11 +171,10 @@ export function createBot(): Bot {
 
     startTyping();
 
-    // Broadcast the user's Telegram message to SSE clients
-    broadcastTranscriptEntry("user", ctx.message.text, "telegram");
+    // Broadcast the user's message to SSE clients
+    broadcastTranscriptEntry("user", prompt, "telegram");
 
-    // Safety timeout — if orchestrator doesn't respond within the worker timeout,
-    // stop the typing indicator and notify the user
+    // Safety timeout
     let responded = false;
     const safetyTimeout = setTimeout(() => {
       if (!responded) {
@@ -181,17 +187,15 @@ export function createBot(): Bot {
     }, config.workerTimeoutMs);
 
     sendToOrchestrator(
-      ctx.message.text,
+      prompt,
       { type: "telegram", chatId, messageId: userMessageId },
       (text: string, done: boolean) => {
         if (done) {
-          if (responded) return; // Safety timeout already fired
+          if (responded) return;
           responded = true;
           clearTimeout(safetyTimeout);
           stopTyping();
-          // Broadcast the assistant response to SSE clients
           broadcastTranscriptEntry("assistant", text, "telegram");
-          // Send final message — use chunking for long responses, reply-quote original
           void (async () => {
             const formatted = toTelegramMarkdown(text);
             const chunks = chunkMessage(formatted);
@@ -219,8 +223,55 @@ export function createBot(): Bot {
             }
           })();
         }
-      }
+      },
+      attachments
     );
+  }
+
+  // Handle all text messages
+  bot.on("message:text", async (ctx) => {
+    handleIncomingMessage(ctx, ctx.chat.id, ctx.message.message_id, ctx.message.text);
+  });
+
+  // Handle photo messages
+  bot.on("message:photo", async (ctx) => {
+    try {
+      // Get highest-resolution photo (last in array)
+      const photos = ctx.message.photo;
+      const photo = photos[photos.length - 1];
+      const file = await ctx.api.getFile(photo.file_id);
+
+      if (!file.file_path) {
+        await ctx.reply("Could not download the photo.");
+        return;
+      }
+
+      // Download to uploads dir
+      const ext = file.file_path.includes(".") ? file.file_path.slice(file.file_path.lastIndexOf(".")) : ".jpg";
+      const fileName = `tg-${Date.now()}${ext}`;
+      const localPath = join(ATTACHE_UPLOADS_DIR, fileName);
+
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegramBotToken}/${file.file_path}`;
+      const resp = await fetch(fileUrl);
+      if (!resp.ok) {
+        await ctx.reply("Failed to download the photo from Telegram.");
+        return;
+      }
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      writeFileSync(localPath, buffer);
+
+      const caption = ctx.message.caption || "Attached photo";
+      handleIncomingMessage(
+        ctx,
+        ctx.chat.id,
+        ctx.message.message_id,
+        caption,
+        [{ type: "file", path: localPath, displayName: fileName }],
+      );
+    } catch (err) {
+      console.error(`${LOG_PREFIX} Failed to process Telegram photo:`, err instanceof Error ? err.message : err);
+      await ctx.reply("Failed to process the photo.").catch(() => {});
+    }
   });
 
   return bot;

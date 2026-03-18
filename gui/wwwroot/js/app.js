@@ -58,6 +58,67 @@ window.attache = {
             }
         };
         element.addEventListener('keydown', element._composerHandler);
+
+        // Clipboard paste — intercept image pastes
+        element._pasteHandler = function (e) {
+            if (!e.clipboardData || !e.clipboardData.items) return;
+            for (var i = 0; i < e.clipboardData.items.length; i++) {
+                var item = e.clipboardData.items[i];
+                if (item.type.indexOf('image/') === 0) {
+                    e.preventDefault();
+                    var blob = item.getAsFile();
+                    if (!blob) continue;
+                    var reader = new FileReader();
+                    reader.onload = function () {
+                        // result is "data:image/png;base64,..."
+                        var base64 = reader.result.split(',')[1];
+                        var ext = blob.type.split('/')[1] || 'png';
+                        if (ext === 'jpeg') ext = 'jpg';
+                        dotnetRef.invokeMethodAsync('JsImagePasted', base64, ext);
+                    };
+                    reader.readAsDataURL(blob);
+                    break; // only handle one image
+                }
+            }
+        };
+        element.addEventListener('paste', element._pasteHandler);
+
+        // Drag-and-drop file attachment
+        var composerDiv = element.closest('.composer');
+        if (composerDiv) {
+            element._dragOverHandler = function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                composerDiv.classList.add('drag-over');
+            };
+            element._dragLeaveHandler = function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                composerDiv.classList.remove('drag-over');
+            };
+            element._dropHandler = function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                composerDiv.classList.remove('drag-over');
+                var paths = [];
+                if (e.dataTransfer && e.dataTransfer.files) {
+                    for (var i = 0; i < e.dataTransfer.files.length; i++) {
+                        var f = e.dataTransfer.files[i];
+                        // In Electron/WebView2, files have a .path property
+                        if (f.path) {
+                            paths.push(f.path);
+                        }
+                    }
+                }
+                if (paths.length > 0) {
+                    dotnetRef.invokeMethodAsync('JsFilesDropped', paths);
+                }
+            };
+            composerDiv.addEventListener('dragover', element._dragOverHandler);
+            composerDiv.addEventListener('dragleave', element._dragLeaveHandler);
+            composerDiv.addEventListener('drop', element._dropHandler);
+            element._composerDiv = composerDiv;
+        }
     },
 
     setSlashMenuOpen: function (element, open) {
@@ -87,6 +148,20 @@ window.attache = {
         if (element && element._composerHandler) {
             element.removeEventListener('keydown', element._composerHandler);
             delete element._composerHandler;
+        }
+        if (element && element._pasteHandler) {
+            element.removeEventListener('paste', element._pasteHandler);
+            delete element._pasteHandler;
+        }
+        if (element && element._composerDiv) {
+            var div = element._composerDiv;
+            if (element._dragOverHandler) div.removeEventListener('dragover', element._dragOverHandler);
+            if (element._dragLeaveHandler) div.removeEventListener('dragleave', element._dragLeaveHandler);
+            if (element._dropHandler) div.removeEventListener('drop', element._dropHandler);
+            delete element._composerDiv;
+            delete element._dragOverHandler;
+            delete element._dragLeaveHandler;
+            delete element._dropHandler;
         }
     }
 };

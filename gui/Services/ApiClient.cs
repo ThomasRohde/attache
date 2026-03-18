@@ -348,13 +348,36 @@ public class ApiClient : IDisposable
         return (connectionId, reader);
     }
 
-    public async Task<bool> SendMessageAsync(string prompt, string connectionId)
+    public async Task<bool> SendMessageAsync(string prompt, string connectionId, List<AttachmentInfo>? attachments = null)
     {
         RefreshConnection();
-        var body = JsonSerializer.Serialize(new { prompt, connectionId });
-        using var content = new StringContent(body, Encoding.UTF8, "application/json");
-        var resp = await _http.PostAsync("/message", content);
-        return resp.IsSuccessStatusCode;
+        try
+        {
+            object payload;
+            if (attachments is { Count: > 0 })
+            {
+                var atts = attachments.Select(a => new { path = a.StagedPath, name = a.FileName }).ToArray();
+                payload = new { prompt, connectionId, attachments = atts };
+            }
+            else
+            {
+                payload = new { prompt, connectionId };
+            }
+            var body = JsonSerializer.Serialize(payload);
+            using var content = new StringContent(body, Encoding.UTF8, "application/json");
+            var resp = await _http.PostAsync("/message", content);
+            if (!resp.IsSuccessStatusCode)
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                System.Diagnostics.Debug.WriteLine($"[ApiClient] POST /message failed ({resp.StatusCode}): {err}");
+            }
+            return resp.IsSuccessStatusCode;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[ApiClient] POST /message exception: {ex.Message}");
+            return false;
+        }
     }
 
     public async Task<bool> PostCancelAsync()

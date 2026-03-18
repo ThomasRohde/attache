@@ -64,6 +64,21 @@
                         <div class="entry-content">
                             <MarkdownBlock Content="@entry.Content" />
                         </div>
+                        @if (entry.Attachments is { Count: > 0 })
+                        {
+                            <div class="entry-attachments">
+                                @foreach (var att in entry.Attachments)
+                                {
+                                    <div class="entry-attachment-chip">
+                                        @if (att.IsImage && att.ThumbnailDataUri is not null)
+                                        {
+                                            <img class="attachment-thumb" src="@att.ThumbnailDataUri" alt="@att.FileName" />
+                                        }
+                                        <span>@att.FileName</span>
+                                    </div>
+                                }
+                            </div>
+                        }
                     </div>
                 }
 

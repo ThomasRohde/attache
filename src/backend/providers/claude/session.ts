@@ -1,5 +1,6 @@
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import type {
+  Attachment,
   BackendSession,
   SendResult,
   SessionEventName,
@@ -51,8 +52,14 @@ export class ClaudeBackendSession implements BackendSession {
     return this._sessionId;
   }
 
-  async sendAndWait(prompt: string, timeoutMs?: number): Promise<SendResult> {
+  async sendAndWait(prompt: string, timeoutMs?: number, attachments?: Attachment[]): Promise<SendResult> {
     if (this._destroyed) throw new Error("Session is destroyed");
+
+    // Text fallback for attachments (Claude backend doesn't support native file attachments)
+    if (attachments?.length) {
+      const listing = attachments.map(a => `[Attached file: ${a.displayName || a.path}] (${a.path})`).join("\n");
+      prompt = `${prompt}\n\n${listing}`;
+    }
 
     const ac = new AbortController();
     this._activeAbortController = ac;

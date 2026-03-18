@@ -12,15 +12,32 @@ import { createBot, startBot, stopBot, sendProactiveMessage } from "./telegram/b
 import { getDb, closeDb } from "./store/db.js";
 import { config } from "./config.js";
 import { spawn } from "child_process";
-import { statSync } from "fs";
+import { readdirSync, statSync, unlinkSync } from "fs";
 import { checkForUpdate } from "./update.js";
 import { getEffectiveIdentity, LOG_PREFIX, PRIMARY_RUNTIME_ENV } from "./identity.js";
+import { ATTACHE_UPLOADS_DIR } from "./paths.js";
 import { acquireWakeLock, releaseWakeLock } from "./wakelock.js";
 import { startCronScheduler, stopCronScheduler } from "./cron/scheduler.js";
 
 function truncate(text: string, max = 200): string {
   const oneLine = text.replace(/\n/g, " ").trim();
   return oneLine.length > max ? oneLine.slice(0, max) + "…" : oneLine;
+}
+
+/** Delete files in ~/.attache/uploads/ older than 24 hours. */
+function cleanupUploads(): void {
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const entry of readdirSync(ATTACHE_UPLOADS_DIR)) {
+      try {
+        const fullPath = `${ATTACHE_UPLOADS_DIR}/${entry}`;
+        const stat = statSync(fullPath);
+        if (stat.isFile() && stat.mtimeMs < cutoff) {
+          unlinkSync(fullPath);
+        }
+      } catch { /* best-effort per file */ }
+    }
+  } catch { /* uploads dir may not exist yet */ }
 }
 
 async function main(): Promise<void> {
@@ -61,6 +78,9 @@ async function main(): Promise<void> {
   // Initialize SQLite
   getDb();
   console.log(`${LOG_PREFIX} Database initialized`);
+
+  // Clean up stale uploads
+  cleanupUploads();
 
   // Start backend client (defaults to Copilot SDK via ATTACHE_BACKEND config)
   const backendName = config.backend;

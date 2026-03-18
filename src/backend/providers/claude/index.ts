@@ -33,6 +33,7 @@ export class ClaudeBackendClient implements BackendClient {
     skillDirectories: false,
     structuredOutput: false,
     machineSessionDiscovery: false,
+    vision: false,
   };
 
   private state: ConnectionState = "disconnected";

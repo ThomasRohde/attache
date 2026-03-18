@@ -49,9 +49,15 @@ export interface SendResult {
   content: string;
 }
 
+export interface Attachment {
+  type: "file";
+  path: string;
+  displayName?: string;
+}
+
 export interface BackendSession {
   readonly sessionId: string;
-  sendAndWait(prompt: string, timeoutMs?: number): Promise<SendResult>;
+  sendAndWait(prompt: string, timeoutMs?: number, attachments?: Attachment[]): Promise<SendResult>;
   on<E extends SessionEventName>(event: E, handler: (data: SessionEvents[E]) => void): UnsubscribeFn;
   abort(): Promise<void>;
   destroy(): Promise<void>;
@@ -66,6 +72,7 @@ export interface BackendCapabilities {
   skillDirectories: boolean;
   structuredOutput: boolean;
   machineSessionDiscovery: boolean;
+  vision: boolean;
 }
 
 export interface BackendClient {
