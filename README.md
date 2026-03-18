@@ -1,6 +1,8 @@
 # Attache
 
-Attache is a local AI orchestrator built on the GitHub Copilot SDK. It runs a daemon on your machine, keeps a long-lived orchestrator session alive, and lets you interact with it from a desktop GUI, Telegram, or any HTTP client. For coding work, Attache dispatches worker Copilot sessions into project directories and streams the results back to you.
+Attache is a local AI orchestrator that runs a persistent daemon on your machine and delegates coding tasks to short-lived worker sessions. It supports pluggable backends (Copilot SDK, Claude Agent SDK, OpenAI Codex) and accepts input from a desktop GUI, Telegram, or any HTTP client.
+
+![Attache desktop GUI](docs/screenshot.png)
 
 ## Highlights
 
@@ -18,55 +20,34 @@ Attache is a local AI orchestrator built on the GitHub Copilot SDK. It runs a da
 ## Prerequisites
 
 - **Node.js 18+**
-- **GitHub Copilot CLI** installed and authenticated (`copilot login`)
+- **GitHub Copilot CLI** installed and authenticated (`copilot login`) — required for the default Copilot backend
 - **.NET 10 SDK** (Windows, for the desktop GUI)
 
-## Install
-
-```bash
-npm install -g attache
-```
+For alternative backends, set the appropriate API key instead:
+- **Claude backend**: `ANTHROPIC_API_KEY`
+- **Codex backend**: `OPENAI_API_KEY`
 
 ## Quick start
 
-### 1. Authenticate Copilot
-
 ```bash
-copilot login
-```
-
-### 2. Launch the GUI
-
-```bash
+git clone https://github.com/ThomasRohde/attache.git
+cd attache
+npm install
 npm start
 ```
 
-This builds the TypeScript daemon, launches the GUI from source, and lets the GUI start the daemon on demand. On first launch, a setup wizard walks you through choosing a display name, default model, and optional Telegram integration.
+`npm start` builds the TypeScript daemon and launches the GUI from source. On first launch, a setup wizard walks you through choosing a display name, default model, and optional Telegram integration.
 
-### 3. Talk to Attache
-
-Example prompts:
+### Example prompts
 
 - "Start working on the auth bug in ~/dev/myapp"
 - "What sessions are running?"
 - "Check on the api-tests session"
 - "Switch to claude-opus-4.6"
 
-## Command reference
-
-| Command | Description |
-| --- | --- |
-| `attache start` | Start the daemon |
-| `attache update` | Install the latest published package update |
-| `attache help` | Show CLI help |
-
-| Flag | Description |
-| --- | --- |
-| `--self-edit` | Enable self-edit mode for the current daemon process |
-
 ## Desktop GUI
 
-The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorWebView. All UI is Razor components with HTML/CSS.
+The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorWebView.
 
 ### Layout
 
@@ -88,72 +69,124 @@ The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorW
 ### Features
 
 - Streaming markdown rendering (Markdig + highlight.js)
-- Unified transcript: see both GUI and Telegram conversations
-- Worker list with status indicators and selection
+- Unified transcript with channel tabs (GUI, Telegram, background workers)
+- Worker list with status indicators, live output streaming, and selection
 - Inspector: workfolder, git branch, model, backend, process diagnostics
-- Configuration dialog: model, backend, workfolder, Telegram, display name
+- Configuration dialog: model, backend, workfolder, Telegram, display name, self-edit toggle
 - System tray: start/stop/restart daemon, hide to tray on close, auto-start at login
+- Graceful daemon shutdown (Ctrl+C) with kill fallback
 
 ## Configuration
 
-Stored in `~/.attache/.env`. The GUI currently exposes only the following settings through the Settings dialog or setup wizard: provider, model, display name, workfolder, Telegram bot token, and Telegram user ID. Other values must be edited manually.
+Stored in `~/.attache/.env`. Most settings are configurable through the GUI Settings dialog. Values can also be edited manually.
 
-| Key | Description | Default |
-| --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | Telegram bot token | -- |
-| `AUTHORIZED_USER_ID` | Numeric Telegram user ID | -- |
-| `API_PORT` | Daemon API port | `7777` |
-| `COPILOT_MODEL` | Default model | `claude-sonnet-4.6` |
-| `WORKER_TIMEOUT` | Worker timeout in ms | `600000` |
-| `ASSISTANT_DISPLAY_NAME` | Cosmetic name shown in UI | `Attache` |
-| `ATTACHE_SELF_EDIT` | Allow self-modification | disabled |
-| `ATTACHE_PREVENT_SLEEP` | Keep PC awake while daemon runs | disabled |
-| `ATTACHE_WORKFOLDER` | Default working directory for workers | -- |
-| `ATTACHE_BACKEND` | Backend provider (`copilot`, `claude`, `codex`) | `copilot` |
-| `ANTHROPIC_API_KEY` | API key (required for Claude backend) | -- |
-| `OPENAI_API_KEY` | API key (required for Codex backend) | -- |
+| Key | Description | Default | Hot-reload |
+| --- | --- | --- | --- |
+| `COPILOT_MODEL` | Default model | `claude-sonnet-4.6` | Yes |
+| `ASSISTANT_DISPLAY_NAME` | Cosmetic name shown in UI | `Attache` | Yes |
+| `WORKER_TIMEOUT` | Worker timeout in ms | `600000` | Yes |
+| `ATTACHE_SELF_EDIT` | Allow self-modification (`1` to enable) | disabled | Yes |
+| `ATTACHE_WORKFOLDER` | Default working directory for workers | -- | Restart |
+| `ATTACHE_BACKEND` | Backend provider (`copilot`, `claude`, `codex`) | `copilot` | Restart |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token | -- | Restart |
+| `AUTHORIZED_USER_ID` | Numeric Telegram user ID | -- | Restart |
+| `API_PORT` | Daemon API port | `7777` | Restart |
+| `ATTACHE_PREVENT_SLEEP` | Keep PC awake while daemon runs | disabled | Restart |
+| `ANTHROPIC_API_KEY` | API key (required for Claude backend) | -- | Restart |
+| `OPENAI_API_KEY` | API key (required for Codex backend) | -- | Restart |
+
+## CLI
+
+```bash
+attache start [--self-edit]   # Start the daemon
+attache update                # Install the latest published update
+attache help                  # Show CLI help
+```
 
 ## Daemon API
 
 Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 
-- `/status` is public
-- All other routes require `Authorization: Bearer <token>` (from `~/.attache/api-token`)
-- `/stream` must be opened before `/message`; the stream returns a `connectionId` that the client must include in each message request
+- `/status` is public; all other routes require `Authorization: Bearer <token>` (from `~/.attache/api-token`)
+- `/stream` must be opened before `/message`; the stream returns a `connectionId` that the client includes in each message request
+
+### Core
 
 | Method | Path | Description |
 | --- | --- | --- |
 | `GET` | `/status` | Health check |
-| `GET` | `/config/effective` | Runtime identity and config |
-| `GET` | `/sessions` | List worker sessions |
-| `GET` | `/workers/:id` | Worker detail |
-| `GET` | `/workers/:id/logs` | Worker output logs |
-| `POST` | `/workers/:id/cancel` | Cancel a worker |
-| `GET` | `/diagnostics` | Process, routing, and worker diagnostics |
-| `GET` | `/transcript` | Conversation history from database |
-| `GET` | `/workfolder` | Current working directory + git info |
-| `POST` | `/workfolder` | Change workfolder (triggers restart) |
-| `POST` | `/config` | Update `.env` config values |
 | `GET` | `/stream` | SSE event stream |
-| `POST` | `/message` | Submit a prompt (requires an active `/stream` connection) |
+| `POST` | `/message` | Submit a prompt (requires active `/stream`) |
 | `POST` | `/cancel` | Cancel in-flight message |
+| `GET` | `/transcript` | Conversation history |
+| `GET` | `/diagnostics` | Process, routing, and worker diagnostics |
+| `GET` | `/capabilities` | API capabilities manifest |
+| `POST` | `/restart` | Restart daemon |
+| `POST` | `/shutdown` | Graceful shutdown |
+
+### Configuration
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/config/effective` | Runtime config |
+| `POST` | `/config` | Update `.env` config values |
 | `GET` | `/model` | Current model |
 | `POST` | `/model` | Switch model |
+| `GET` | `/models` | List available models |
 | `GET` | `/backend` | Current backend provider |
 | `POST` | `/backend` | Switch backend provider |
+| `GET` | `/workfolder` | Current working directory + git info |
+| `POST` | `/workfolder` | Change workfolder (triggers restart) |
+
+### Workers
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/sessions` | List worker sessions |
+| `POST` | `/workers` | Create a worker session |
+| `GET` | `/workers/:id` | Worker detail |
+| `GET` | `/workers/:id/logs` | Worker output logs |
+| `POST` | `/workers/:id/prompt` | Send a follow-up prompt |
+| `POST` | `/workers/:id/cancel` | Cancel a worker |
+
+### Memory
+
+| Method | Path | Description |
+| --- | --- | --- |
 | `GET` | `/memory` | List memories |
 | `POST` | `/memory` | Add a memory |
 | `DELETE` | `/memory/:id` | Remove a memory |
+
+### Skills
+
+| Method | Path | Description |
+| --- | --- | --- |
 | `GET` | `/skills` | List skills |
-| `GET` | `/skills/:slug/content` | Read a skill's content |
+| `GET` | `/skills/stats` | Skill usage statistics |
+| `GET` | `/skills/:slug/content` | Read a skill |
 | `PUT` | `/skills/:slug` | Update a local skill |
 | `DELETE` | `/skills/:slug` | Remove a local skill |
+| `POST` | `/skills/:slug/usage` | Log skill usage |
+| `GET` | `/skills/:slug/usage` | Skill usage history |
+
+### Cron
+
+| Method | Path | Description |
+| --- | --- | --- |
 | `GET` | `/cron` | List cron jobs |
 | `POST` | `/cron` | Create a cron job |
+| `GET` | `/cron/:id` | Get a cron job |
 | `PUT` | `/cron/:id` | Update a cron job |
 | `DELETE` | `/cron/:id` | Delete a cron job |
-| `GET` | `/capabilities` | API capabilities manifest |
-| `POST` | `/restart` | Restart daemon |
+| `POST` | `/cron/:id/toggle` | Enable/disable a cron job |
+| `GET` | `/cron/:id/history` | Execution history for a job |
+| `GET` | `/cron/history` | Global execution history |
+
+### Other
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `POST` | `/send-photo` | Send a photo via Telegram |
 
 ### Key paths
 
@@ -177,9 +210,9 @@ Telegram ───> Attache Daemon <─── Desktop GUI
       Worker 1    Worker 2    Worker N
 ```
 
-- **Daemon** (`src/daemon.ts`): Backend client, Express API, optional Telegram bot
-- **Orchestrator** (`src/copilot/orchestrator.ts`): long-lived session, serial message queue
-- **Workers** (`src/copilot/tools.ts`): background sessions in project directories (max 5, configurable timeout)
+- **Daemon** (`src/daemon.ts`): backend client, Express API, optional Telegram bot
+- **Orchestrator** (`src/copilot/orchestrator.ts`): long-lived session, serial message queue, session invalidation on backend reset
+- **Workers** (`src/copilot/tools.ts`): background sessions in project directories (max 5, configurable timeout), live output streaming
 - **Backend** (`src/backend/`): pluggable providers — Copilot SDK, Claude Agent SDK, OpenAI Codex
 - **Cron** (`src/cron/scheduler.ts`): recurring task scheduling via node-cron
 - **GUI** (`gui/`): Blazor Hybrid WinForms app with streaming SSE, Markdig markdown, system tray
@@ -192,17 +225,17 @@ git clone https://github.com/ThomasRohde/attache.git
 cd attache
 npm install
 
-# Start daemon (development, with hot reload)
+# Build TypeScript daemon and launch the GUI from source
+npm start
+
+# Start daemon only (development, with hot reload)
 npm run dev
 
-# Start daemon (one-shot)
+# Start daemon only (one-shot)
 npm run daemon
 
 # Full build (TypeScript + GUI exe)
 npm run build
-
-# Build TypeScript daemon and launch the GUI from source
-npm start
 
 # Build TypeScript only
 npm run build:ts
@@ -210,6 +243,9 @@ npm run build:ts
 # Build GUI exe only (single-file, self-contained)
 npm run build:gui
 # Output: gui/dist-win/AttacheGui.exe
+
+# Rebuild and restart everything (daemon + GUI)
+npm run reload:all
 
 # Launch GUI in development mode (debug build, hot reload)
 dotnet run --project gui/AttacheGui.csproj
