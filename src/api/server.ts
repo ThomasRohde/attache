@@ -989,7 +989,8 @@ app.post("/cron", (req: Request, res: Response) => {
     return;
   }
 
-  const id = createCronJob(name, prompt, cron_expression, notify_telegram ?? false);
+  const backend = getBackendName();
+  const id = createCronJob(name, prompt, cron_expression, notify_telegram ?? false, backend);
   rescheduleJob(id);
   const job = getCronJob(id);
   broadcastCronEvent("cron.job.created", { ...(job ?? { id, name }) });

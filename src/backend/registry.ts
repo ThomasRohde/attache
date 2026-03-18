@@ -97,7 +97,10 @@ export async function stopBackendClient(): Promise<void> {
 export async function resetBackendClient(): Promise<BackendClient> {
   if (backendClient) {
     if ("reset" in backendClient && typeof (backendClient as any).reset === "function") {
+      // Backend supports in-place reset (e.g. Copilot) — no need to
+      // destroy the orchestrator session or recreate the client.
       await (backendClient as any).reset();
+      return backendClient;
     } else {
       await clearOrchestratorStateAfterBackendReset();
       await backendClient.stop();

@@ -28,7 +28,13 @@
                             </button>
                         </div>
                         <div class="cron-job-info">
-                            <div class="cron-job-name">@job.Name</div>
+                            <div class="cron-job-name">
+                                @job.Name
+                                @if (!string.IsNullOrEmpty(job.Backend))
+                                {
+                                    <span class="cron-backend-tag">@job.Backend</span>
+                                }
+                            </div>
                             <div class="cron-job-expr">@job.CronExpression</div>
                         </div>
                         <div class="cron-job-status">
@@ -101,6 +107,10 @@
                         </span>
                     </div>
                 }
+                <div class="cron-detail-row">
+                    <span class="cron-detail-label">Backend</span>
+                    <span class="cron-detail-value">@(SelectedJob.Backend ?? "any")</span>
+                </div>
                 <div class="cron-detail-row">
                     <span class="cron-detail-label">Telegram</span>
                     <span class="cron-detail-value">@(SelectedJob.NotifyTelegram ? "Notifications on" : "Off")</span>

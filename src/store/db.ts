@@ -105,6 +105,7 @@ export function getDb(): Database.Database {
         cron_expression TEXT NOT NULL,
         enabled INTEGER NOT NULL DEFAULT 1,
         notify_telegram INTEGER NOT NULL DEFAULT 0,
+        backend TEXT,
         last_run_at DATETIME,
         last_status TEXT CHECK(last_status IN ('success', 'failure', 'running')),
         next_run_at DATETIME,
@@ -149,6 +150,10 @@ export function getDb(): Database.Database {
       });
       migrateConversationLog();
     }
+    // Migrate: add backend column to cron_jobs if missing
+    try {
+      db.exec(`ALTER TABLE cron_jobs ADD COLUMN backend TEXT`);
+    } catch { /* column already exists */ }
     // Prune conversation log at startup
     db.prepare(`DELETE FROM conversation_log WHERE id NOT IN (SELECT id FROM conversation_log ORDER BY id DESC LIMIT 200)`).run();
   }
@@ -409,6 +414,7 @@ export interface CronJob {
   cron_expression: string;
   enabled: number;
   notify_telegram: number;
+  backend: string | null;
   last_run_at: string | null;
   last_status: string | null;
   next_run_at: string | null;
@@ -434,11 +440,12 @@ export function createCronJob(
   prompt: string,
   cronExpr: string,
   notifyTelegram = false,
+  backend?: string,
 ): number {
   const db = getDb();
   const result = db.prepare(
-    `INSERT INTO cron_jobs (name, prompt, cron_expression, notify_telegram) VALUES (?, ?, ?, ?)`,
-  ).run(name, prompt, cronExpr, notifyTelegram ? 1 : 0);
+    `INSERT INTO cron_jobs (name, prompt, cron_expression, notify_telegram, backend) VALUES (?, ?, ?, ?, ?)`,
+  ).run(name, prompt, cronExpr, notifyTelegram ? 1 : 0, backend ?? null);
   return result.lastInsertRowid as number;
 }
 
@@ -454,17 +461,18 @@ export function getCronJob(id: number): CronJob | undefined {
 
 export function updateCronJob(
   id: number,
-  fields: Partial<{ name: string; prompt: string; cron_expression: string; enabled: boolean; notify_telegram: boolean }>,
+  fields: Partial<{ name: string; prompt: string; cron_expression: string; enabled: boolean; notify_telegram: boolean; backend: string | null }>,
 ): void {
   const db = getDb();
   const sets: string[] = [];
-  const params: (string | number)[] = [];
+  const params: (string | number | null)[] = [];
 
   if (fields.name !== undefined) { sets.push("name = ?"); params.push(fields.name); }
   if (fields.prompt !== undefined) { sets.push("prompt = ?"); params.push(fields.prompt); }
   if (fields.cron_expression !== undefined) { sets.push("cron_expression = ?"); params.push(fields.cron_expression); }
   if (fields.enabled !== undefined) { sets.push("enabled = ?"); params.push(fields.enabled ? 1 : 0); }
   if (fields.notify_telegram !== undefined) { sets.push("notify_telegram = ?"); params.push(fields.notify_telegram ? 1 : 0); }
+  if (fields.backend !== undefined) { sets.push("backend = ?"); params.push(fields.backend); }
 
   if (sets.length === 0) return;
   sets.push("updated_at = CURRENT_TIMESTAMP");

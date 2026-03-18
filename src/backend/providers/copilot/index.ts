@@ -51,6 +51,7 @@ export class CopilotBackendClient implements BackendClient {
     // Map Copilot SDK states to our abstract states
     if (state === "connected") return "connected";
     if (state === "connecting") return "connecting";
+    if (state === "error") return "error";
     return "disconnected";
   }
 

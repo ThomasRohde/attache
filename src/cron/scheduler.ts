@@ -10,6 +10,7 @@ import {
 } from "../store/db.js";
 import { sendToOrchestrator } from "../copilot/orchestrator.js";
 import { broadcastToSSE, broadcastTranscriptEntry, broadcastCronEvent } from "../api/server.js";
+import { getBackendName } from "../backend/registry.js";
 import { config } from "../config.js";
 import { LOG_PREFIX } from "../identity.js";
 
@@ -51,6 +52,32 @@ async function executeJob(jobId: number): Promise<void> {
 
   const job = getCronJob(jobId);
   if (!job || !job.enabled) return;
+
+  // Guard against duplicate execution within the same calendar minute
+  // (can happen if the daemon restarts mid-minute and re-fires the job).
+  if (job.last_run_at) {
+    const lastRun = new Date(job.last_run_at);
+    const now = new Date();
+    if (
+      lastRun.getFullYear() === now.getFullYear() &&
+      lastRun.getMonth() === now.getMonth() &&
+      lastRun.getDate() === now.getDate() &&
+      lastRun.getHours() === now.getHours() &&
+      lastRun.getMinutes() === now.getMinutes()
+    ) {
+      console.log(`${LOG_PREFIX} [cron] Skipping job #${jobId} "${job.name}" — already ran this minute`);
+      return;
+    }
+  }
+
+  // Guard: skip if the job requires a specific backend that isn't active.
+  if (job.backend) {
+    const activeBackend = getBackendName();
+    if (job.backend !== activeBackend) {
+      console.log(`${LOG_PREFIX} [cron] Skipping job #${jobId} "${job.name}" — requires ${job.backend} backend, active is ${activeBackend}`);
+      return;
+    }
+  }
 
   runningJobs.add(jobId);
   const startedAt = Date.now();

@@ -8,6 +8,8 @@ export function getOrchestratorSystemMessage(
     assistantDisplayName?: string;
     backendName?: string;
     apiPort?: number;
+    /** Skill content to inject for backends that don't support skillDirectories. */
+    skillContent?: string;
   },
 ): string {
   const identity = getEffectiveIdentity({ assistantDisplayName: opts?.assistantDisplayName });
@@ -140,6 +142,7 @@ ${concurrencyBlock}`}
 
 ${toolSection}
 
+${opts?.skillContent ? `## Installed Skills\n\nThe following skills are installed and available. Follow their instructions when relevant.\n\n${opts.skillContent}\n` : ""}
 ${isToolless ? "" : `**Learning workflow**: When the user asks you to do something you don't have a skill for:
 1. **Search skills.sh first**: Use the find-skills skill to search https://skills.sh for existing community skills.
 2. **Present what you found**: Include the skill name, what it does, where it comes from, and its security status.

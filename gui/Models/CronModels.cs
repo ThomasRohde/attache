@@ -28,6 +28,9 @@ public class CronJob
     [JsonIgnore]
     public bool NotifyTelegram => NotifyTelegramInt != 0;
 
+    [JsonPropertyName("backend")]
+    public string? Backend { get; set; }
+
     [JsonPropertyName("last_run_at")]
     public string? LastRunAt { get; set; }
 

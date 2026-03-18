@@ -46,7 +46,7 @@
             {
                 @foreach (var entry in TranscriptSnapshot)
                 {
-                    <div class="transcript-entry">
+                    <div class="transcript-entry @(entry.Role == "user" ? "entry-user" : "entry-assistant")">
                         <div class="entry-header">
                             <span class="@(entry.Role == "user" ? "role-user" : "role-assistant")">
                                 @(entry.Role == "user" ? "You" : AssistantName)
@@ -84,7 +84,7 @@
 
                 @if (State.StreamingContent is not null && State.SelectedChannel == "tui")
                 {
-                    <div class="transcript-entry">
+                    <div class="transcript-entry entry-assistant">
                         <div class="entry-header">
                             <span class="role-assistant">@AssistantName</span>
                             <span class="timestamp">now</span>

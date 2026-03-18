@@ -211,6 +211,35 @@ export function updateSkill(
   return { ok: true, message: `Skill '${name}' (${slug}) updated successfully.` };
 }
 
+/**
+ * Read all installed skills and return their content formatted for injection
+ * into the system message (used by backends that don't support skillDirectories).
+ */
+export function getSkillContentForSystemMessage(): string {
+  const skills = listSkills();
+  if (skills.length === 0) return "";
+
+  const sections: string[] = [];
+  let totalLength = 0;
+
+  for (const skill of skills) {
+    const result = readSkill(skill.slug);
+    if (!result.ok || !result.content) continue;
+
+    // Strip frontmatter — the AI doesn't need YAML metadata
+    const content = result.content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n*/, "").trim();
+    if (!content) continue;
+
+    // Budget: keep total under MAX_SKILL_CONTENT_LENGTH
+    if (totalLength + content.length > MAX_SKILL_CONTENT_LENGTH) break;
+    totalLength += content.length;
+
+    sections.push(`### ${skill.name} (${skill.source})\n\n${content}`);
+  }
+
+  return sections.join("\n\n---\n\n");
+}
+
 /** Parse YAML frontmatter from a SKILL.md file. */
 function parseFrontmatter(content: string): { name: string; description: string } {
   const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);

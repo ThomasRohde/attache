@@ -20,7 +20,7 @@ internal class SplashForm : Form
         StartPosition = FormStartPosition.CenterScreen;
         ShowInTaskbar = false;
         TopMost = true;
-        BackColor = Color.FromArgb(24, 24, 28);
+        BackColor = Color.FromArgb(26, 26, 31);
         Size = new Size(380, 400);
         DoubleBuffered = true;
 

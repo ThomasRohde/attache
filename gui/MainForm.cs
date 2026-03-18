@@ -37,7 +37,7 @@ public partial class MainForm : Form
     {
         Text = "Attache";
         MinimumSize = new Size(900, 600);
-        BackColor = IsSystemDarkMode() ? Color.FromArgb(30, 30, 30) : Color.White;
+        BackColor = IsSystemDarkMode() ? Color.FromArgb(26, 26, 31) : Color.FromArgb(245, 242, 237);
 
         if (!RestoreWindowBounds())
         {

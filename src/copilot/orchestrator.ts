@@ -4,7 +4,7 @@ import { createTools, TOOL_REGISTRY, type WorkerInfo } from "./tools.js";
 import { getOrchestratorSystemMessage } from "./system-message.js";
 import { config, DEFAULT_MODEL } from "../config.js";
 import { loadMcpConfig } from "./mcp-config.js";
-import { getSkillDirectories } from "./skills.js";
+import { getSkillDirectories, getSkillContentForSystemMessage } from "./skills.js";
 import { getDb, logConversation, getState, setState, deleteState, getMemorySummary, getRecentConversation } from "../store/db.js";
 import { SESSIONS_DIR } from "../paths.js";
 import { LOG_PREFIX } from "../identity.js";
@@ -184,17 +184,34 @@ export async function resetForBackendReset(): Promise<void> {
   ]);
 }
 
-/** Start periodic health check that proactively reconnects the client. */
+/** Start periodic health check that proactively reconnects the client.
+ *  Waits for consecutive "disconnected" checks before resetting to avoid
+ *  fighting with the SDK's own autoRestart / reconnect logic. */
+let healthCheckMisses = 0;
+const HEALTH_CHECK_MISS_THRESHOLD = 3; // require 3 consecutive misses (~90s)
 function startHealthCheck(): void {
   if (healthCheckTimer) return;
   healthCheckTimer = setInterval(async () => {
     if (!backendClient) return;
     try {
       const state = backendClient.getState();
-      if (state !== "connected") {
-        console.log(`${LOG_PREFIX} Health check: client state is '${state}', resetting…`);
-        await ensureClient();
+      if (state === "connected") {
+        healthCheckMisses = 0;
+        return;
       }
+      // "connecting" means the SDK is already recovering — give it time
+      if (state === "connecting") {
+        healthCheckMisses = 0;
+        return;
+      }
+      healthCheckMisses++;
+      if (healthCheckMisses < HEALTH_CHECK_MISS_THRESHOLD) {
+        console.log(`${LOG_PREFIX} Health check: client state is '${state}' (miss ${healthCheckMisses}/${HEALTH_CHECK_MISS_THRESHOLD})`);
+        return;
+      }
+      console.log(`${LOG_PREFIX} Health check: client state is '${state}' for ${healthCheckMisses} checks, resetting…`);
+      healthCheckMisses = 0;
+      await ensureClient();
     } catch (err) {
       console.error(`${LOG_PREFIX} Health check error:`, err instanceof Error ? err.message : err);
     }
@@ -232,6 +249,12 @@ async function createOrResumeSession(): Promise<BackendSession> {
   const memorySummary = getMemorySummary();
   const modelToUse = config.copilotModel;
 
+  // For backends without native skill directory support, inject skill content
+  // into the system message so the AI can still follow skill instructions.
+  const skillContent = client.capabilities.skillDirectories
+    ? undefined
+    : getSkillContentForSystemMessage() || undefined;
+
   const infiniteSessions = client.capabilities.infiniteSessions ? {
     enabled: true,
     backgroundCompactionThreshold: 0.80,
@@ -252,6 +275,7 @@ async function createOrResumeSession(): Promise<BackendSession> {
           assistantDisplayName: config.assistantLabel,
           backendName: backendClient!.name,
           apiPort: config.apiPort,
+          skillContent,
         }),
         tools: client.capabilities.customTools ? tools : undefined,
         mcpServers,

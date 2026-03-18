@@ -570,7 +570,8 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
     defineTool("schedule_task", {
       description:
         "Create a recurring scheduled task that runs on a cron schedule. " +
-        "Use when the user wants something to happen periodically (daily reports, hourly checks, etc.).",
+        "Use when the user wants something to happen periodically (daily reports, hourly checks, etc.). " +
+        "The current backend is recorded with the job. If the backend changes, the job will be skipped at execution time.",
       parameters: z.object({
         name: z.string().describe("Short descriptive name for the task, e.g. 'morning-report'"),
         prompt: z.string().describe("The prompt to send to the orchestrator when the task fires"),
@@ -581,12 +582,14 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         if (!validateCronExpression(args.cron_expression)) {
           return `Invalid cron expression: "${args.cron_expression}". Use 5-field format: minute hour day month weekday. Examples: "0 8 * * *" (daily at 8am), "0 * * * *" (every hour), "*/15 * * * *" (every 15 minutes).`;
         }
-        const id = dbCreateCronJob(args.name, args.prompt, args.cron_expression, args.notify_telegram);
+        const { getBackendName } = await import("../backend/registry.js");
+        const backend = getBackendName();
+        const id = dbCreateCronJob(args.name, args.prompt, args.cron_expression, args.notify_telegram, backend);
         rescheduleJob(id);
         // Broadcast SSE event
         const { broadcastCronEvent } = await import("../api/server.js");
-        broadcastCronEvent("cron.job.created", { id, name: args.name, cron_expression: args.cron_expression, enabled: true });
-        return `Scheduled task "${args.name}" created (#${id}). It will run on schedule: ${args.cron_expression}`;
+        broadcastCronEvent("cron.job.created", { id, name: args.name, cron_expression: args.cron_expression, enabled: true, backend });
+        return `Scheduled task "${args.name}" created (#${id}). It will run on schedule: ${args.cron_expression} (backend: ${backend})`;
       },
     }),
 
@@ -602,7 +605,8 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           const status = j.enabled ? "enabled" : "disabled";
           const lastRun = j.last_run_at ? `last run: ${j.last_run_at}` : "never run";
           const lastResult = j.last_status ? ` (${j.last_status})` : "";
-          return `• #${j.id} "${j.name}" [${status}] — ${j.cron_expression} — ${lastRun}${lastResult} — ${j.run_count} runs`;
+          const backendTag = j.backend ? ` [${j.backend}]` : "";
+          return `• #${j.id} "${j.name}" [${status}]${backendTag} — ${j.cron_expression} — ${lastRun}${lastResult} — ${j.run_count} runs`;
         });
         return `Scheduled tasks (${jobs.length}):\n${lines.join("\n")}`;
       },
