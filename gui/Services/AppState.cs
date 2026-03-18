@@ -98,6 +98,20 @@ public class AppState
         NotifyStateChanged();
     }
 
+    public void HandleSendFailure(string content)
+    {
+        StreamingContent = null;
+        IsProcessing = false;
+        TranscriptEntries.Add(new TranscriptEntry
+        {
+            Role = "assistant",
+            Content = content,
+            Source = "tui",
+            Timestamp = DateTime.Now,
+        });
+        RecordChannelActivity("tui");
+    }
+
     public void SelectChannel(string source)
     {
         SelectedChannel = source;

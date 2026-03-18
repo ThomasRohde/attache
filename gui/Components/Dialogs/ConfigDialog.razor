@@ -48,13 +48,22 @@
                         <label>Display Name</label>
                         <input @bind="_displayName" placeholder="Attache" />
                     </div>
+                    <div class="form-group">
+                        <div style="margin-top: 4px;">
+                            <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer;">
+                                <input type="checkbox" @bind="_selfEdit" style="width: auto;" />
+                                Self Edit
+                            </label>
+                        </div>
+                        <div class="hint">Allow the assistant to modify its own source code and configuration.</div>
+                    </div>
                     break;
 
                 case "workfolder":
                     <div class="form-group">
                         <label>Working Folder</label>
                         <input @bind="_workfolder" placeholder="C:\path\to\project" />
-                        <div class="hint">Changing the workfolder will restart the daemon.</div>
+                        <div class="hint">Changing or clearing the workfolder requires a daemon restart.</div>
                     </div>
                     @if (State.Workfolder?.GitBranch is not null)
                     {
@@ -68,13 +77,31 @@
                 case "telegram":
                     <div class="form-group">
                         <label>Bot Token</label>
-                        <input @bind="_telegramToken" placeholder="From BotFather" />
+                        <input type="password" @bind="_telegramToken" placeholder="From BotFather" />
+                        @if (_telegramTokenConfigured)
+                        {
+                            <div class="hint" style="margin-top: 6px;">
+                                <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer;">
+                                    <input type="checkbox" @bind="_clearTelegramToken" style="width: auto;" />
+                                    Clear the saved bot token
+                                </label>
+                            </div>
+                        }
                     </div>
                     <div class="form-group">
                         <label>Authorized User ID</label>
                         <input @bind="_telegramUserId" placeholder="Numeric Telegram user ID" />
+                        @if (_telegramUserConfigured)
+                        {
+                            <div class="hint" style="margin-top: 6px;">
+                                <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer;">
+                                    <input type="checkbox" @bind="_clearTelegramUserId" style="width: auto;" />
+                                    Clear the saved user ID
+                                </label>
+                            </div>
+                        }
                     </div>
-                    <div class="hint">Changes require a daemon restart to take effect.</div>
+                    <div class="hint">Leave a field blank to keep the current saved value. Use the clear toggles to remove saved Telegram settings.</div>
                     break;
 
                 case "about":
@@ -133,9 +160,14 @@
     private string _backend = "copilot";
     private string _initialBackend = "copilot";
     private string _displayName = "";
+    private bool _selfEdit;
     private string _workfolder = "";
     private string _telegramToken = "";
     private string _telegramUserId = "";
+    private bool _telegramTokenConfigured;
+    private bool _telegramUserConfigured;
+    private bool _clearTelegramToken;
+    private bool _clearTelegramUserId;
     private bool _saving;
     private bool _restartRequired;
     private List<ModelInfo> _models = [];
@@ -159,6 +191,9 @@
             _displayName = config.AssistantDisplayName;
             _backend = config.Backend;
             _initialBackend = config.Backend;
+            _selfEdit = config.SelfEdit;
+            _telegramTokenConfigured = config.TelegramBotTokenConfigured;
+            _telegramUserConfigured = config.AuthorizedUserConfigured;
         }
 
         _models = await modelsTask;
@@ -183,59 +218,79 @@
         try
         {
             bool needsRestart = false;
+            var desiredModel = _model.Trim();
 
             switch (_activeTab)
             {
                 case "model":
+                    _restartRequired = false;
                     // Save provider change first (requires restart)
                     if (_backend != _initialBackend)
                     {
-                        await Api.PostBackendAsync(_backend);
+                        var providerSaved = await Api.PostBackendAsync(_backend);
+                        if (!providerSaved)
+                            return;
                         needsRestart = true;
-                    }
-
-                    if (!needsRestart)
-                    {
-                        // Only save model if not restarting
-                        // (it'll use new provider defaults after restart)
-                        if (!string.IsNullOrWhiteSpace(_model))
-                            await Api.PostModelAsync(_model.Trim());
-                    }
-
-                    if (needsRestart)
-                    {
-                        await Api.PostRestartAsync();
                     }
                     break;
 
                 case "general":
-                    if (!string.IsNullOrWhiteSpace(_displayName))
+                    var (_, rr) = await Api.PostConfigAsync(new Dictionary<string, string>
                     {
-                        var (_, rr) = await Api.PostConfigAsync(new Dictionary<string, string>
-                        {
-                            ["ASSISTANT_DISPLAY_NAME"] = _displayName.Trim()
-                        });
-                        _restartRequired = rr;
-                    }
+                        ["ASSISTANT_DISPLAY_NAME"] = _displayName.Trim(),
+                        ["ATTACHE_SELF_EDIT"] = _selfEdit ? "1" : "",
+                    });
+                    _restartRequired = rr;
                     break;
 
                 case "workfolder":
-                    if (!string.IsNullOrWhiteSpace(_workfolder))
-                        await Api.PostWorkfolderAsync(_workfolder.Trim());
+                    var (_, rrWorkfolder) = await Api.PostConfigAsync(new Dictionary<string, string>
+                    {
+                        ["ATTACHE_WORKFOLDER"] = _workfolder.Trim()
+                    });
+                    _restartRequired = rrWorkfolder;
                     break;
 
                 case "telegram":
                     var values = new Dictionary<string, string>();
-                    if (!string.IsNullOrWhiteSpace(_telegramToken))
-                        values["TELEGRAM_BOT_TOKEN"] = _telegramToken.Trim();
-                    if (!string.IsNullOrWhiteSpace(_telegramUserId))
-                        values["AUTHORIZED_USER_ID"] = _telegramUserId.Trim();
+                    if (_clearTelegramToken || !string.IsNullOrWhiteSpace(_telegramToken))
+                        values["TELEGRAM_BOT_TOKEN"] = _clearTelegramToken ? "" : _telegramToken.Trim();
+                    if (_clearTelegramUserId || !string.IsNullOrWhiteSpace(_telegramUserId))
+                        values["AUTHORIZED_USER_ID"] = _clearTelegramUserId ? "" : _telegramUserId.Trim();
                     if (values.Count > 0)
                     {
                         var (_, rrTg) = await Api.PostConfigAsync(values);
                         _restartRequired = rrTg;
+                        if (rrTg)
+                        {
+                            if (_clearTelegramToken)
+                                _telegramTokenConfigured = false;
+                            else if (!string.IsNullOrWhiteSpace(_telegramToken))
+                                _telegramTokenConfigured = true;
+                            if (_clearTelegramUserId)
+                                _telegramUserConfigured = false;
+                            else if (!string.IsNullOrWhiteSpace(_telegramUserId))
+                                _telegramUserConfigured = true;
+                        }
                     }
                     break;
+            }
+
+            if (_activeTab == "model")
+            {
+                if (needsRestart)
+                {
+                    await Api.PostRestartAsync();
+                    await WaitForBackendAsync(_backend);
+                }
+
+                if (!string.IsNullOrWhiteSpace(desiredModel))
+                {
+                    if (!await RetryPostModelAsync(desiredModel))
+                        return;
+                }
+
+                _restartRequired = false;
             }
         }
         finally
@@ -309,6 +364,38 @@
         {
             // Best effort: the daemon may be restarting.
         }
+    }
+
+    private async Task WaitForBackendAsync(string backend)
+    {
+        for (var attempt = 0; attempt < 30; attempt++)
+        {
+            try
+            {
+                var current = await Api.GetBackendAsync();
+                if (current == backend)
+                    return;
+            }
+            catch
+            {
+                // Daemon may still be coming back.
+            }
+
+            await Task.Delay(1000);
+        }
+    }
+
+    private async Task<bool> RetryPostModelAsync(string model)
+    {
+        for (var attempt = 0; attempt < 10; attempt++)
+        {
+            if (await Api.PostModelAsync(model))
+                return true;
+
+            await Task.Delay(500);
+        }
+
+        return false;
     }
 
     private async Task Close() => await OnClose.InvokeAsync();

@@ -60,6 +60,7 @@
 
         // Always register cron as a known channel
         State.KnownChannels.Add("cron");
+        State.KnownChannels.Add("background");
 
         // Load conversation history from database
         await LoadTranscriptHistoryAsync();
@@ -191,6 +192,7 @@
         // Background completions are shown as transcript entries without
         // finalizing the current foreground streaming response.
         State.AddTranscriptEntry("assistant", content, "background");
+        State.RecordChannelActivity("background");
         InvokeAsync(StateHasChanged);
     }
 
@@ -257,6 +259,7 @@
     {
         State.ConnectionState = ConnectionState.Connecting;
         State.StatusMessage = message;
+        State.HandleCancelled();
         State.Workers = [];
         State.SelectedWorkerId = null;
         State.WorkerLogs = null;

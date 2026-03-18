@@ -1,18 +1,18 @@
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
-import { readFileSync, writeFileSync, existsSync, statSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, realpathSync, statSync } from "fs";
 import { randomBytes } from "crypto";
 import { execSync } from "child_process";
 import { sendToOrchestrator, getWorkers, cancelCurrentMessage, getActiveModel, feedBackgroundResult, resetSession } from "../copilot/orchestrator.js";
 import { sendPhoto } from "../telegram/bot.js";
-import { config, persistEnvVar, prepareConfigUpdate, persistConfigUpdate, validateAndSwitchModel } from "../config.js";
+import { config, persistEnvVar, prepareConfigUpdate, persistConfigUpdate, SUPPORTED_BACKENDS, type SupportedBackend, validateAndSwitchModel, validateWorkfolderPath } from "../config.js";
 import { getDb, searchMemories, logConversation, addMemory, removeMemory, clearConversationLog, logSkillUsage, getSkillStats, getSkillUsageHistory, getCronJobs, getCronJob, createCronJob, updateCronJob, deleteCronJob, getCronExecutions } from "../store/db.js";
 import { listSkills, removeSkill, updateSkill, readSkill } from "../copilot/skills.js";
-import { restartDaemon } from "../daemon.js";
+import { restartDaemon, shutdownDaemon } from "../daemon.js";
 import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { API_TOKEN_PATH, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
 import { join, sep, resolve } from "path";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { TOOL_REGISTRY, BLOCKED_WORKER_DIRS, MAX_CONCURRENT_WORKERS, type WorkerInfo } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
 import { getBackendClient, getBackendName, getStaticModels } from "../backend/registry.js";
@@ -64,9 +64,96 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // Active SSE connections
 const sseClients = new Map<string, Response>();
 let connectionCounter = 0;
+const CONFIGURABLE_KEYS = new Set<Parameters<typeof prepareConfigUpdate>[0]>([
+  "TELEGRAM_BOT_TOKEN",
+  "AUTHORIZED_USER_ID",
+  "API_PORT",
+  "COPILOT_MODEL",
+  "WORKER_TIMEOUT",
+  "ASSISTANT_DISPLAY_NAME",
+  "ATTACHE_WORKFOLDER",
+  "ATTACHE_BACKEND",
+  "ATTACHE_SELF_EDIT",
+  "ANTHROPIC_API_KEY",
+  "OPENAI_API_KEY",
+]);
+const ALLOWED_LOCAL_PHOTO_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"]);
 
 function getWorkerIdParam(req: Request): string {
   return Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+}
+
+function isWithinDirectory(targetPath: string, directory: string): boolean {
+  return targetPath === directory || targetPath.startsWith(directory + sep);
+}
+
+async function getModelsForProvider(provider: SupportedBackend) {
+  if (provider !== getBackendName()) {
+    return getStaticModels(provider);
+  }
+
+  try {
+    return await getBackendClient().listModels();
+  } catch {
+    return undefined;
+  }
+}
+
+async function validateModelForProvider(modelId: string, provider: SupportedBackend): Promise<string | undefined> {
+  const models = await getModelsForProvider(provider);
+  if (!models || models.length === 0) {
+    return undefined;
+  }
+
+  const match = models.find((model) => model.id === modelId);
+  if (match) {
+    return undefined;
+  }
+
+  const suggestions = models
+    .filter((model) => model.id.includes(modelId) || model.id.toLowerCase().includes(modelId.toLowerCase()))
+    .map((model) => model.id);
+  const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(", ")}?` : "";
+  return `Model '${modelId}' is not available for backend '${provider}'.${hint}`;
+}
+
+function validateLocalPhotoPath(photo: string): string {
+  let resolvedPhoto: string;
+  try {
+    resolvedPhoto = realpathSync(resolve(photo));
+  } catch {
+    throw new Error(`Photo path '${photo}' does not exist`);
+  }
+
+  const extension = resolvedPhoto.slice(resolvedPhoto.lastIndexOf(".")).toLowerCase();
+  if (!ALLOWED_LOCAL_PHOTO_EXTENSIONS.has(extension)) {
+    throw new Error(`Refused: local photos must be one of ${Array.from(ALLOWED_LOCAL_PHOTO_EXTENSIONS).join(", ")}`);
+  }
+
+  const stat = statSync(resolvedPhoto);
+  if (!stat.isFile()) {
+    throw new Error(`Refused: '${photo}' is not a file`);
+  }
+
+  const home = homedir();
+  for (const blocked of BLOCKED_WORKER_DIRS) {
+    const blockedPath = resolve(home, blocked);
+    if (isWithinDirectory(resolvedPhoto, blockedPath)) {
+      throw new Error(`Refused: photo path is in a sensitive directory (${blocked}).`);
+    }
+  }
+
+  const attacheHome = resolve(home, ".attache");
+  if (isWithinDirectory(resolvedPhoto, attacheHome)) {
+    throw new Error("Refused: photo path is in the Attache config directory.");
+  }
+
+  const allowedRoots = [resolve(process.cwd()), resolve(tmpdir())];
+  if (!allowedRoots.some((root) => isWithinDirectory(resolvedPhoto, root))) {
+    throw new Error("Refused: local photos must be inside the current workfolder or the system temp directory.");
+  }
+
+  return resolvedPhoto;
 }
 
 function summarizeWorker(worker: ReturnType<typeof getWorkers> extends Map<string, infer T> ? T : never) {
@@ -108,6 +195,13 @@ async function cancelWorker(id: string): Promise<boolean> {
   return true;
 }
 
+function persistWorkerOutput(worker: WorkerInfo, output: string): void {
+  worker.lastOutput = output;
+  getDb().prepare(
+    `UPDATE worker_sessions SET last_output = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?`,
+  ).run(output, worker.name);
+}
+
 // Health check
 app.get("/status", (_req: Request, res: Response) => {
   res.json({
@@ -129,6 +223,9 @@ app.get("/config/effective", (_req: Request, res: Response) => {
     currentModel: config.copilotModel,
     backend: getBackendName(),
     telegramEnabled: config.telegramEnabled,
+    selfEdit: config.selfEditEnabled,
+    telegramBotTokenConfigured: !!config.telegramBotToken,
+    authorizedUserConfigured: config.authorizedUserId !== undefined,
   });
 });
 
@@ -257,21 +354,29 @@ app.post("/workers", async (req: Request, res: Response) => {
       ).run(name);
 
       const timeoutMs = config.workerTimeoutMs;
+      let streamedOutput = "";
+      const unsubDelta = session.on("assistant.message_delta", (data) => {
+        if (worker.cancelled) return;
+        streamedOutput += data.deltaContent;
+        persistWorkerOutput(worker, streamedOutput);
+      });
       session.sendAndWait(`Working directory: ${workingDir}\n\n${initial_prompt}`, timeoutMs)
         .then((result) => {
+          unsubDelta();
           if (worker.cancelled) return;
           worker.status = "idle";
-          worker.lastOutput = result.content || "No response";
+          persistWorkerOutput(worker, result.content || streamedOutput || "No response");
           db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(name);
-          feedBackgroundResult(name, worker.lastOutput);
+          feedBackgroundResult(name, worker.lastOutput ?? "No response");
         })
         .catch((err) => {
+          unsubDelta();
           if (worker.cancelled) return;
           worker.status = "error";
           const msg = err instanceof Error ? err.message : String(err);
-          worker.lastOutput = `Worker '${name}' failed: ${msg}`;
+          persistWorkerOutput(worker, `Worker '${name}' failed: ${msg}`);
           db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(name);
-          feedBackgroundResult(name, worker.lastOutput);
+          feedBackgroundResult(name, worker.lastOutput ?? `Worker '${name}' failed: ${msg}`);
         });
 
       res.json({ status: "dispatched", name, workingDir });
@@ -314,21 +419,29 @@ app.post("/workers/:id/prompt", async (req: Request, res: Response) => {
   ).run(workerId);
 
   const timeoutMs = config.workerTimeoutMs;
+  let streamedOutput = "";
+  const unsubDelta = worker.session.on("assistant.message_delta", (data) => {
+    if (worker.cancelled) return;
+    streamedOutput += data.deltaContent;
+    persistWorkerOutput(worker, streamedOutput);
+  });
   worker.session.sendAndWait(prompt, timeoutMs)
     .then((result) => {
+      unsubDelta();
       if (worker.cancelled) return;
       worker.status = "idle";
-      worker.lastOutput = result.content || "No response";
+      persistWorkerOutput(worker, result.content || streamedOutput || "No response");
       db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(workerId);
-      feedBackgroundResult(workerId, worker.lastOutput);
+      feedBackgroundResult(workerId, worker.lastOutput ?? "No response");
     })
     .catch((err) => {
+      unsubDelta();
       if (worker.cancelled) return;
       worker.status = "error";
       const msg = err instanceof Error ? err.message : String(err);
-      worker.lastOutput = `Worker '${workerId}' failed: ${msg}`;
+      persistWorkerOutput(worker, `Worker '${workerId}' failed: ${msg}`);
       db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(workerId);
-      feedBackgroundResult(workerId, worker.lastOutput);
+      feedBackgroundResult(workerId, worker.lastOutput ?? `Worker '${workerId}' failed: ${msg}`);
     });
 
   res.json({ status: "dispatched", name: workerId });
@@ -627,9 +740,8 @@ app.post("/backend", (req: Request, res: Response) => {
     res.status(400).json({ error: "Missing 'name' in request body" });
     return;
   }
-  const supported = ["copilot", "claude", "codex"];
-  if (!supported.includes(name)) {
-    res.status(400).json({ error: `Unknown backend '${name}'. Supported: ${supported.join(", ")}` });
+  if (!SUPPORTED_BACKENDS.includes(name as SupportedBackend)) {
+    res.status(400).json({ error: `Unknown backend '${name}'. Supported: ${SUPPORTED_BACKENDS.join(", ")}` });
     return;
   }
   const previous = getBackendName();
@@ -996,17 +1108,13 @@ app.post("/workfolder", (req: Request, res: Response) => {
   }
 
   try {
-    const stat = statSync(newPath);
-    if (!stat.isDirectory()) {
-      res.status(400).json({ error: `'${newPath}' is not a directory` });
-      return;
-    }
-  } catch {
-    res.status(400).json({ error: `Path '${newPath}' does not exist` });
+    const workfolder = validateWorkfolderPath(newPath);
+    persistEnvVar("ATTACHE_WORKFOLDER", workfolder);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    res.status(400).json({ error: msg });
     return;
   }
-
-  persistEnvVar("ATTACHE_WORKFOLDER", newPath);
   res.json({ status: "ok", restartRequired: true });
 
   // Trigger restart so daemon picks up new workfolder
@@ -1019,29 +1127,54 @@ app.post("/workfolder", (req: Request, res: Response) => {
 
 // Update .env config values
 app.post("/config", async (req: Request, res: Response) => {
-  const values = req.body as Record<string, string>;
-  if (!values || typeof values !== "object") {
+  const values = req.body as Record<string, unknown>;
+  if (!values || typeof values !== "object" || Array.isArray(values)) {
     res.status(400).json({ error: "Body must be a JSON object of key-value pairs" });
     return;
   }
 
-  // Allowlist of configurable keys
-  const allowedKeys = new Set([
-    "TELEGRAM_BOT_TOKEN",
-    "AUTHORIZED_USER_ID",
-    "API_PORT",
-    "COPILOT_MODEL",
-    "WORKER_TIMEOUT",
-    "ASSISTANT_DISPLAY_NAME",
-    "ATTACHE_WORKFOLDER",
-    "ATTACHE_BACKEND",
-    "ANTHROPIC_API_KEY",
-    "OPENAI_API_KEY",
-  ]);
+  const entries = Object.entries(values);
+  if (entries.length === 0) {
+    res.status(400).json({ error: "Body must include at least one setting" });
+    return;
+  }
 
-  const updates = [];
+  const requestedBackend = values.ATTACHE_BACKEND;
+  let targetBackend = getBackendName() as SupportedBackend;
+  if (requestedBackend !== undefined) {
+    if (typeof requestedBackend !== "string") {
+      res.status(400).json({ error: "Value for 'ATTACHE_BACKEND' must be a string" });
+      return;
+    }
+    const trimmed = requestedBackend.trim();
+    if (!SUPPORTED_BACKENDS.includes(trimmed as SupportedBackend)) {
+      res.status(400).json({ error: `Unknown backend '${requestedBackend}'. Supported: ${SUPPORTED_BACKENDS.join(", ")}` });
+      return;
+    }
+    targetBackend = trimmed as SupportedBackend;
+  }
+
+  if (typeof values.COPILOT_MODEL === "string" && values.COPILOT_MODEL.trim() !== "") {
+    const modelError = await validateModelForProvider(values.COPILOT_MODEL.trim(), targetBackend);
+    if (modelError) {
+      res.status(400).json({ error: modelError });
+      return;
+    }
+  }
+
+  if (typeof values.ATTACHE_WORKFOLDER === "string" && values.ATTACHE_WORKFOLDER.trim() !== "") {
+    try {
+      validateWorkfolderPath(values.ATTACHE_WORKFOLDER);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(400).json({ error: msg });
+      return;
+    }
+  }
+
+  const updates: Awaited<ReturnType<typeof prepareConfigUpdate>>[] = [];
   for (const [key, value] of Object.entries(values)) {
-    if (!allowedKeys.has(key)) {
+    if (!CONFIGURABLE_KEYS.has(key as Parameters<typeof prepareConfigUpdate>[0])) {
       res.status(400).json({ error: `Key '${key}' is not a configurable setting` });
       return;
     }
@@ -1077,6 +1210,16 @@ app.post("/restart", (_req: Request, res: Response) => {
   }, 500);
 });
 
+// Graceful daemon shutdown
+app.post("/shutdown", (_req: Request, res: Response) => {
+  res.json({ status: "shutting_down" });
+  setTimeout(() => {
+    shutdownDaemon("HTTP API").catch((err) => {
+      console.error(`${LOG_PREFIX} Shutdown failed:`, err);
+    });
+  }, 500);
+});
+
 // Send a photo to Telegram (protected by bearer token auth middleware)
 app.post("/send-photo", async (req: Request, res: Response) => {
   const { photo, caption } = req.body as { photo?: string; caption?: string };
@@ -1088,20 +1231,11 @@ app.post("/send-photo", async (req: Request, res: Response) => {
 
   // URLs are fine — only validate local file paths
   if (!photo.startsWith("http://") && !photo.startsWith("https://")) {
-    const resolvedPhoto = resolve(photo);
-    const home = homedir();
-    // Block sensitive directories
-    for (const blocked of BLOCKED_WORKER_DIRS) {
-      const blockedPath = join(home, blocked);
-      if (resolvedPhoto === blockedPath || resolvedPhoto.startsWith(blockedPath + sep)) {
-        res.status(403).json({ error: `Refused: photo path is in a sensitive directory (${blocked}).` });
-        return;
-      }
-    }
-    // Block Attache's own config directory (contains API keys, tokens)
-    const attacheHome = join(home, ".attache");
-    if (resolvedPhoto.startsWith(attacheHome + sep) || resolvedPhoto === attacheHome) {
-      res.status(403).json({ error: "Refused: photo path is in the Attache config directory." });
+    try {
+      validateLocalPhotoPath(photo);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(403).json({ error: msg });
       return;
     }
   }

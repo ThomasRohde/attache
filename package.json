@@ -10,13 +10,14 @@
     "skills/",
     "gui/dist-win/AttacheGui.exe",
     "scripts/postinstall.js",
+    "scripts/start.mjs",
     "README.md"
   ],
   "scripts": {
     "build": "tsc && cd gui && dotnet publish AttacheGui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist-win && echo. && echo Build complete. Run with: gui/dist-win/AttacheGui.exe",
     "build:ts": "tsc",
     "build:gui": "cd gui && dotnet publish AttacheGui.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -o dist-win",
-    "start": "tsx src/daemon.ts & gui\\dist-win\\AttacheGui.exe",
+    "start": "node scripts/start.mjs",
     "daemon": "tsx src/daemon.ts",
     "dev": "tsx --watch src/daemon.ts",
     "postinstall": "node scripts/postinstall.js",

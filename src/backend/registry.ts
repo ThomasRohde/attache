@@ -13,6 +13,15 @@ import { CODEX_MODELS } from "./providers/codex/models.js";
 let backendClient: BackendClient | undefined;
 let backendName: string = "copilot";
 
+async function clearOrchestratorStateAfterBackendReset(): Promise<void> {
+  try {
+    const orchestrator = await import("../copilot/orchestrator.js");
+    await orchestrator.resetForBackendReset();
+  } catch {
+    // Best effort — the orchestrator may not be initialized yet.
+  }
+}
+
 /**
  * Initialize and return the backend client for the given backend name.
  * If already initialized, returns the existing instance.
@@ -75,6 +84,7 @@ export function getDefaultModelForProvider(provider: string): string | undefined
 /** Stop the backend client and clear the singleton. */
 export async function stopBackendClient(): Promise<void> {
   if (backendClient) {
+    await clearOrchestratorStateAfterBackendReset();
     await backendClient.stop();
     backendClient = undefined;
   }
@@ -89,10 +99,13 @@ export async function resetBackendClient(): Promise<BackendClient> {
     if ("reset" in backendClient && typeof (backendClient as any).reset === "function") {
       await (backendClient as any).reset();
     } else {
+      await clearOrchestratorStateAfterBackendReset();
       await backendClient.stop();
       backendClient = undefined;
-      return initBackendClient(backendName);
+      const client = await initBackendClient(backendName);
+      return client;
     }
   }
+  await clearOrchestratorStateAfterBackendReset();
   return initBackendClient(backendName);
 }

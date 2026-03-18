@@ -5,7 +5,7 @@ import { getOrchestratorSystemMessage } from "./system-message.js";
 import { config, DEFAULT_MODEL } from "../config.js";
 import { loadMcpConfig } from "./mcp-config.js";
 import { getSkillDirectories } from "./skills.js";
-import { logConversation, getState, setState, deleteState, getMemorySummary, getRecentConversation } from "../store/db.js";
+import { getDb, logConversation, getState, setState, deleteState, getMemorySummary, getRecentConversation } from "../store/db.js";
 import { SESSIONS_DIR } from "../paths.js";
 import { LOG_PREFIX } from "../identity.js";
 
@@ -41,6 +41,7 @@ export function setProactiveNotify(fn: ProactiveNotifyFn): void {
 let backendClient: BackendClient | undefined;
 const workers = new Map<string, WorkerInfo>();
 let healthCheckTimer: ReturnType<typeof setInterval> | undefined;
+let sessionStateVersion = 0;
 
 /** The model that will be used for the next session. */
 export function getActiveModel(): string {
@@ -49,27 +50,36 @@ export function getActiveModel(): string {
 
 /** Reset session state after a manual model switch (e.g. via /model command). */
 export function resetForModelSwitch(): void {
-  orchestratorSession = undefined;
-  deleteState(ORCHESTRATOR_SESSION_KEY);
+  invalidateSessionState();
 }
 
 /** Reset the orchestrator session for a /clear command. Destroys the current session if alive. */
 export async function resetSession(): Promise<void> {
-  if (orchestratorSession) {
-    try {
-      await orchestratorSession.destroy();
-    } catch {
-      // Best effort — the session may already be gone
-    }
-  }
-  orchestratorSession = undefined;
-  deleteState(ORCHESTRATOR_SESSION_KEY);
+  const session = orchestratorSession;
+  invalidateSessionState();
+  await destroySession(session);
 }
 
 // Persistent orchestrator session
 let orchestratorSession: BackendSession | undefined;
 // Coalesces concurrent ensureOrchestratorSession calls
 let sessionCreatePromise: Promise<BackendSession> | undefined;
+
+function invalidateSessionState(): void {
+  sessionStateVersion++;
+  orchestratorSession = undefined;
+  sessionCreatePromise = undefined;
+  deleteState(ORCHESTRATOR_SESSION_KEY);
+}
+
+async function destroySession(session?: BackendSession): Promise<void> {
+  if (!session) return;
+  try {
+    await session.destroy();
+  } catch {
+    // Best effort — the session may already be gone.
+  }
+}
 
 // Message queue — serializes access to the single persistent session
 type QueuedMessage = {
@@ -104,6 +114,9 @@ function getSessionConfig() {
 /** Feed a background worker result into the orchestrator as a new turn. */
 export function feedBackgroundResult(workerName: string, result: string): void {
   const worker = workers.get(workerName);
+  if (!worker || worker.cancelled) {
+    return;
+  }
   const channel = worker?.originChannel;
   const prompt = `[Background task completed] Worker '${workerName}' finished:\n\n${result}`;
   sendToOrchestrator(
@@ -138,6 +151,38 @@ async function ensureClient(): Promise<BackendClient> {
   return resetPromise;
 }
 
+async function clearWorkers(): Promise<void> {
+  if (workers.size === 0) return;
+
+  const snapshot = Array.from(workers.values());
+  workers.clear();
+
+  await Promise.allSettled(snapshot.map(async (worker) => {
+    worker.cancelled = true;
+    try {
+      await worker.session.destroy();
+    } catch {
+      // Best effort — sessions may already be gone after a reconnect/reset.
+    }
+  }));
+
+  const db = getDb();
+  const deleteWorker = db.prepare(`DELETE FROM worker_sessions WHERE name = ?`);
+  for (const worker of snapshot) {
+    deleteWorker.run(worker.name);
+  }
+}
+
+/** Clear all backend-dependent session state after a reconnect/reset. */
+export async function resetForBackendReset(): Promise<void> {
+  const session = orchestratorSession;
+  invalidateSessionState();
+  await Promise.allSettled([
+    destroySession(session),
+    clearWorkers(),
+  ]);
+}
+
 /** Start periodic health check that proactively reconnects the client. */
 function startHealthCheck(): void {
   if (healthCheckTimer) return;
@@ -148,8 +193,6 @@ function startHealthCheck(): void {
       if (state !== "connected") {
         console.log(`${LOG_PREFIX} Health check: client state is '${state}', resetting…`);
         await ensureClient();
-        // Session may need recovery after client reset
-        orchestratorSession = undefined;
       }
     } catch (err) {
       console.error(`${LOG_PREFIX} Health check error:`, err instanceof Error ? err.message : err);
@@ -163,13 +206,21 @@ async function ensureOrchestratorSession(): Promise<BackendSession> {
   // Coalesce concurrent callers — wait for an in-flight creation
   if (sessionCreatePromise) return sessionCreatePromise;
 
-  sessionCreatePromise = createOrResumeSession();
+  const creationVersion = sessionStateVersion;
+  const creationPromise = createOrResumeSession();
+  sessionCreatePromise = creationPromise;
   try {
-    const session = await sessionCreatePromise;
+    const session = await creationPromise;
+    if (creationVersion !== sessionStateVersion) {
+      await destroySession(session);
+      throw new Error("Orchestrator session invalidated during creation");
+    }
     orchestratorSession = session;
     return session;
   } finally {
-    sessionCreatePromise = undefined;
+    if (sessionCreatePromise === creationPromise) {
+      sessionCreatePromise = undefined;
+    }
   }
 }
 
@@ -262,7 +313,7 @@ export async function initOrchestrator(client: BackendClient): Promise<void> {
   const previousBackend = getState(ORCHESTRATOR_BACKEND_KEY);
   if (previousBackend && previousBackend !== client.name) {
     console.log(`${LOG_PREFIX} Backend changed from '${previousBackend}' to '${client.name}' — resetting session`);
-    deleteState(ORCHESTRATOR_SESSION_KEY);
+    await resetForBackendReset();
 
     // Auto-switch to the new provider's default model
     const providerDefault = getDefaultModelForProvider(client.name);
@@ -350,12 +401,11 @@ async function executeOnSession(prompt: string, callback: MessageCallback): Prom
     const finalContent = result.content || accumulated || "(No response)";
     return finalContent;
   } catch (err) {
-    // If the session is broken, invalidate it so it's recreated on next attempt
     const msg = err instanceof Error ? err.message : String(err);
-    if (/closed|destroy|disposed|invalid|expired|not found|no conversation found/i.test(msg)) {
-      console.log(`${LOG_PREFIX} Session appears dead, will recreate: ${msg}`);
-      orchestratorSession = undefined;
-      deleteState(ORCHESTRATOR_SESSION_KEY);
+    if (isRecoverableError(err)) {
+      console.log(`${LOG_PREFIX} Session error, invalidating cached session: ${msg}`);
+      await destroySession(orchestratorSession);
+      invalidateSessionState();
     }
     throw err;
   } finally {
@@ -445,6 +495,7 @@ export async function sendToOrchestrator(
         if (isRecoverableError(err) && attempt < MAX_RETRIES) {
           const delay = RECONNECT_DELAYS_MS[Math.min(attempt, RECONNECT_DELAYS_MS.length - 1)];
           console.error(`${LOG_PREFIX} Recoverable error: ${msg}. Retry ${attempt + 1}/${MAX_RETRIES} after ${delay}ms…`);
+          invalidateSessionState();
           await sleep(delay);
           // Reset client before retry in case the connection is stale
           try { await ensureClient(); } catch { /* will fail again on next attempt */ }

@@ -122,7 +122,7 @@ async function main(): Promise<void> {
 
 // Graceful shutdown
 let shutdownState: "idle" | "warned" | "shutting_down" = "idle";
-async function shutdown(): Promise<void> {
+async function shutdown(requireConfirmationForRunningWorkers = true): Promise<void> {
   if (shutdownState === "shutting_down") {
     console.log(`\n${LOG_PREFIX} Forced exit.`);
     process.exit(1);
@@ -132,7 +132,7 @@ async function shutdown(): Promise<void> {
   const workers = getWorkers();
   const running = Array.from(workers.values()).filter(w => w.status === "running");
 
-  if (running.length > 0 && shutdownState === "idle") {
+  if (running.length > 0 && shutdownState === "idle" && requireConfirmationForRunningWorkers) {
     const names = running.map(w => w.name).join(", ");
     console.log(`\n${LOG_PREFIX} ⚠ ${running.length} active worker(s) will be destroyed: ${names}`);
     console.log(`${LOG_PREFIX} Press Ctrl+C again to shut down, or wait for workers to finish.`);
@@ -167,6 +167,11 @@ async function shutdown(): Promise<void> {
   closeDb();
   console.log(`${LOG_PREFIX} Goodbye.`);
   process.exit(0);
+}
+
+export async function shutdownDaemon(reason = "API request"): Promise<void> {
+  console.log(`${LOG_PREFIX} Shutdown requested (${reason}).`);
+  await shutdown(false);
 }
 
 /** Restart the daemon by spawning a new process and exiting. */
@@ -213,8 +218,12 @@ export async function restartDaemon(): Promise<void> {
   process.exit(0);
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
+process.on("SIGINT", () => {
+  void shutdown();
+});
+process.on("SIGTERM", () => {
+  void shutdown();
+});
 
 // Prevent unhandled errors from crashing the daemon
 process.on("unhandledRejection", (reason) => {

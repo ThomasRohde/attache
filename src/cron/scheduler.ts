@@ -14,13 +14,7 @@ import { config } from "../config.js";
 import { LOG_PREFIX } from "../identity.js";
 
 const activeTasks = new Map<number, cron.ScheduledTask>();
-const runningJobs = new Map<number, number>(); // jobId -> startTimestamp
-
-/** Max execution time before the running guard is cleared (60 minutes).
- *  This is a safety net for truly stuck jobs — normally the guard is cleared
- *  by the completion callback. Set high to avoid false positives when the
- *  orchestrator queue is busy. */
-const MAX_EXECUTION_MS = 60 * 60 * 1000;
+const runningJobs = new Set<number>();
 
 function scheduleJob(job: CronJob): void {
   unscheduleJob(job.id);
@@ -49,22 +43,16 @@ function unscheduleJob(id: number): void {
 }
 
 async function executeJob(jobId: number): Promise<void> {
-  // Guard: skip if already running (with timeout safety net)
-  const runStart = runningJobs.get(jobId);
-  if (runStart !== undefined) {
-    if (Date.now() - runStart < MAX_EXECUTION_MS) {
-      console.log(`${LOG_PREFIX} [cron] Skipping job #${jobId} — previous execution still running`);
-      return;
-    }
-    // Stale entry — clear it so the job can run again
-    console.log(`${LOG_PREFIX} [cron] Clearing stale running guard for job #${jobId}`);
-    runningJobs.delete(jobId);
+  // Guard: skip if already running or still queued for completion.
+  if (runningJobs.has(jobId)) {
+    console.log(`${LOG_PREFIX} [cron] Skipping job #${jobId} — previous execution still running`);
+    return;
   }
 
   const job = getCronJob(jobId);
   if (!job || !job.enabled) return;
 
-  runningJobs.set(jobId, Date.now());
+  runningJobs.add(jobId);
   const startedAt = Date.now();
 
   // Insert execution row
@@ -106,8 +94,6 @@ async function executeJob(jobId: number): Promise<void> {
         runCount: (currentJob?.run_count ?? 0) + 1,
       });
 
-      runningJobs.delete(jobId);
-
       // Log to conversation
       logConversation("assistant", text, "cron");
 
@@ -132,6 +118,7 @@ async function executeJob(jobId: number): Promise<void> {
       }
 
       console.log(`${LOG_PREFIX} [cron] Job #${jobId} "${job.name}" ${status} in ${durationMs}ms`);
+      runningJobs.delete(jobId);
     },
   );
 }

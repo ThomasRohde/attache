@@ -55,6 +55,14 @@ function formatWorkerError(workerName: string, startedAt: number, timeoutMs: num
   return `Worker '${workerName}' failed after ${elapsed}s: ${msg}`;
 }
 
+function persistWorkerOutput(worker: WorkerInfo, output: string): void {
+  worker.lastOutput = output;
+  const db = getDb();
+  db.prepare(
+    `UPDATE worker_sessions SET last_output = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?`,
+  ).run(output, worker.name);
+}
+
 export const BLOCKED_WORKER_DIRS = [
   ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud",
   ".kube", ".docker", ".npmrc", ".pypirc", ".attache",
@@ -144,6 +152,13 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           ).run(args.name);
 
           const timeoutMs = config.workerTimeoutMs;
+          let streamedOutput = "";
+          const unsubDelta = session.on("assistant.message_delta", (data) => {
+            if (worker.cancelled) return;
+            streamedOutput += data.deltaContent;
+            persistWorkerOutput(worker, streamedOutput);
+          });
+
           // Non-blocking: dispatch work and return immediately
           session.sendAndWait(
             `Working directory: ${workingDir}\n\n${args.initial_prompt}`,
@@ -152,19 +167,21 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
             if (worker.cancelled) {
               return;
             }
+            unsubDelta();
             worker.status = "idle";
-            worker.lastOutput = result.content || "No response";
+            persistWorkerOutput(worker, result.content || streamedOutput || "No response");
             db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
-            deps.onWorkerComplete(args.name, worker.lastOutput);
+            deps.onWorkerComplete(args.name, worker.lastOutput ?? "No response");
           }).catch((err) => {
+            unsubDelta();
             if (worker.cancelled) {
               return;
             }
             worker.status = "error";
             const errMsg = formatWorkerError(args.name, worker.startedAt!, timeoutMs, err);
-            worker.lastOutput = errMsg;
+            persistWorkerOutput(worker, errMsg);
             db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
-            deps.onWorkerComplete(args.name, errMsg);
+            deps.onWorkerComplete(args.name, worker.lastOutput ?? errMsg);
           });
 
           return `Worker '${args.name}' created in ${workingDir}. Task dispatched — I'll notify you when it's done.`;
@@ -199,24 +216,33 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         );
 
         const timeoutMs = config.workerTimeoutMs;
+        let streamedOutput = "";
+        const unsubDelta = worker.session.on("assistant.message_delta", (data) => {
+          if (worker.cancelled) return;
+          streamedOutput += data.deltaContent;
+          persistWorkerOutput(worker, streamedOutput);
+        });
+
         // Non-blocking: dispatch work and return immediately
         worker.session.sendAndWait(args.prompt, timeoutMs).then((result) => {
+          unsubDelta();
           if (worker.cancelled) {
             return;
           }
           worker.status = "idle";
-          worker.lastOutput = result.content || "No response";
+          persistWorkerOutput(worker, result.content || streamedOutput || "No response");
           db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
-          deps.onWorkerComplete(args.name, worker.lastOutput);
+          deps.onWorkerComplete(args.name, worker.lastOutput ?? "No response");
         }).catch((err) => {
+          unsubDelta();
           if (worker.cancelled) {
             return;
           }
           worker.status = "error";
           const errMsg = formatWorkerError(args.name, worker.startedAt!, timeoutMs, err);
-          worker.lastOutput = errMsg;
+          persistWorkerOutput(worker, errMsg);
           db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
-          deps.onWorkerComplete(args.name, errMsg);
+          deps.onWorkerComplete(args.name, worker.lastOutput ?? errMsg);
         });
 
         return `Task dispatched to worker '${args.name}'. I'll notify you when it's done.`;

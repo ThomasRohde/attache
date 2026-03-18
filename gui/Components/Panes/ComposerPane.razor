@@ -329,8 +329,14 @@
         var connectionId = Sse.ConnectionId;
         if (connectionId is not null)
         {
-            await Api.SendMessageAsync(text, connectionId);
+            var sent = await Api.SendMessageAsync(text, connectionId);
+            if (sent)
+            {
+                return;
+            }
         }
+
+        State.HandleSendFailure("Failed to send message. The daemon may be restarting or the connection expired.");
     }
 
     private async Task CancelAsync()

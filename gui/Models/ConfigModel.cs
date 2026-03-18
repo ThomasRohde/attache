@@ -22,6 +22,15 @@ public class ConfigModel
     [JsonPropertyName("backend")]
     public string Backend { get; set; } = "copilot";
 
+    [JsonPropertyName("selfEdit")]
+    public bool SelfEdit { get; set; }
+
     [JsonPropertyName("telegramEnabled")]
     public bool TelegramEnabled { get; set; }
+
+    [JsonPropertyName("telegramBotTokenConfigured")]
+    public bool TelegramBotTokenConfigured { get; set; }
+
+    [JsonPropertyName("authorizedUserConfigured")]
+    public bool AuthorizedUserConfigured { get; set; }
 }

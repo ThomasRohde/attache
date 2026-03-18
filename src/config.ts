@@ -1,13 +1,18 @@
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
-import { readFileSync, writeFileSync } from "fs";
+import { readFileSync, statSync, writeFileSync } from "fs";
 import { ATTACHE_ENV_PATH, ENV_PATH, ensureAttacheHome } from "./paths.js";
 
-// Load Attache first, then cwd .env for dev compatibility.
+// Only Attache's own env file is trusted by default.
 // override: true ensures restarted daemons pick up .env changes
 // (without it, dotenv skips vars already in process.env from the parent)
 loadEnv({ path: ATTACHE_ENV_PATH, override: true });
-loadEnv(); // also check cwd for backwards compat
+if (process.env.ATTACHE_LOAD_CWD_ENV === "1") {
+  loadEnv({ override: true });
+}
+
+export const SUPPORTED_BACKENDS = ["copilot", "claude", "codex"] as const;
+export type SupportedBackend = (typeof SUPPORTED_BACKENDS)[number];
 
 function getEnvValue(...keys: string[]): string | undefined {
   for (const key of keys) {
@@ -44,7 +49,7 @@ const configSchema = z.object({
   SELF_EDIT_ENABLED: z.string().optional(),
   PREVENT_SLEEP: z.string().optional(),
   ATTACHE_WORKFOLDER: z.string().min(1).optional(),
-  ATTACHE_BACKEND: z.enum(["copilot", "claude", "codex"]).optional(),
+  ATTACHE_BACKEND: z.enum(SUPPORTED_BACKENDS).optional(),
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
   OPENAI_API_KEY: z.string().min(1).optional(),
 });
@@ -59,7 +64,7 @@ const raw = configSchema.parse({
   SELF_EDIT_ENABLED: getEnvValue("ATTACHE_SELF_EDIT"),
   PREVENT_SLEEP: getEnvValue("ATTACHE_PREVENT_SLEEP"),
   ATTACHE_WORKFOLDER: getEnvValue("ATTACHE_WORKFOLDER"),
-  ATTACHE_BACKEND: getEnvValue("ATTACHE_BACKEND") as "copilot" | "claude" | "codex" | undefined,
+  ATTACHE_BACKEND: getEnvValue("ATTACHE_BACKEND") as SupportedBackend | undefined,
   ANTHROPIC_API_KEY: getEnvValue("ANTHROPIC_API_KEY"),
   OPENAI_API_KEY: getEnvValue("OPENAI_API_KEY"),
 });
@@ -143,26 +148,45 @@ function serializeEnvValue(value: string): string {
   return /^[A-Za-z0-9._/-]+$/.test(value) ? value : JSON.stringify(value);
 }
 
+function loadEnvFileLines(): string[] {
+  try {
+    return readFileSync(ENV_PATH, "utf-8").split(/\r?\n/);
+  } catch {
+    return [];
+  }
+}
+
+function writeEnvFileLines(lines: string[]): void {
+  ensureAttacheHome();
+  const normalized = [...lines];
+  while (normalized.length > 0 && normalized[normalized.length - 1] === "") {
+    normalized.pop();
+  }
+  const suffix = normalized.length > 0 ? "\n" : "";
+  writeFileSync(ENV_PATH, `${normalized.join("\n")}${suffix}`);
+}
+
 /** Update or append an env var in the active Attache .env file. */
 export function persistEnvVar(key: string, value: string): void {
-  ensureAttacheHome();
-  try {
-    const content = readFileSync(ENV_PATH, "utf-8");
-    const lines = content.split("\n");
-    let found = false;
-    const updated = lines.map((line) => {
-      if (line.startsWith(`${key}=`)) {
-        found = true;
-        return `${key}=${serializeEnvValue(value)}`;
-      }
-      return line;
-    });
-    if (!found) updated.push(`${key}=${serializeEnvValue(value)}`);
-    writeFileSync(ENV_PATH, updated.join("\n"));
-  } catch {
-    // File doesn't exist — create it
-    writeFileSync(ENV_PATH, `${key}=${serializeEnvValue(value)}\n`);
+  const lines = loadEnvFileLines();
+  let found = false;
+  const updated = lines.map((line) => {
+    if (line.startsWith(`${key}=`)) {
+      found = true;
+      return `${key}=${serializeEnvValue(value)}`;
+    }
+    return line;
+  });
+  if (!found) {
+    updated.push(`${key}=${serializeEnvValue(value)}`);
   }
+  writeEnvFileLines(updated);
+}
+
+/** Remove an env var from the active Attache .env file. */
+export function clearEnvVar(key: string): void {
+  const lines = loadEnvFileLines().filter((line) => !line.startsWith(`${key}=`));
+  writeEnvFileLines(lines);
 }
 
 /** Persist the current model choice to the active Attache .env. */
@@ -179,12 +203,13 @@ export type ConfigUpdateKey =
   | "ASSISTANT_DISPLAY_NAME"
   | "ATTACHE_WORKFOLDER"
   | "ATTACHE_BACKEND"
+  | "ATTACHE_SELF_EDIT"
   | "ANTHROPIC_API_KEY"
   | "OPENAI_API_KEY";
 
 export interface PreparedConfigUpdate {
   key: ConfigUpdateKey;
-  persistedValue: string;
+  persistedValue: string | null;
   restartRequired: boolean;
   apply(): Promise<void> | void;
 }
@@ -205,6 +230,26 @@ function parseWorkerTimeout(value: string): number {
   return parsed;
 }
 
+function isClearRequest(value: string): boolean {
+  return value.trim().length === 0;
+}
+
+export function validateWorkfolderPath(value: string): string {
+  const workfolder = normalizeNonEmptyString(value, "ATTACHE_WORKFOLDER");
+  let stat;
+  try {
+    stat = statSync(workfolder);
+  } catch {
+    throw new Error(`Path '${workfolder}' does not exist`);
+  }
+
+  if (!stat.isDirectory()) {
+    throw new Error(`'${workfolder}' is not a directory`);
+  }
+
+  return workfolder;
+}
+
 /**
  * Validate a config change before persisting it.
  *
@@ -214,6 +259,16 @@ function parseWorkerTimeout(value: string): number {
 export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): PreparedConfigUpdate {
   switch (key) {
     case "ASSISTANT_DISPLAY_NAME": {
+      if (isClearRequest(value)) {
+        return {
+          key,
+          persistedValue: null,
+          restartRequired: false,
+          apply: () => {
+            config.assistantDisplayName = undefined;
+          },
+        };
+      }
       const displayName = normalizeNonEmptyString(value, key);
       return {
         key,
@@ -252,6 +307,14 @@ export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): Prepar
     }
 
     case "AUTHORIZED_USER_ID": {
+      if (isClearRequest(value)) {
+        return {
+          key,
+          persistedValue: null,
+          restartRequired: true,
+          apply: () => {},
+        };
+      }
       const userId = parseStrictPositiveInteger(value, key);
       if (userId === undefined) {
         throw new Error(`${key} must be a positive integer`);
@@ -279,8 +342,8 @@ export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): Prepar
 
     case "ATTACHE_BACKEND": {
       const backend = normalizeNonEmptyString(value, key);
-      if (!["copilot", "claude", "codex"].includes(backend)) {
-        throw new Error(`Unknown backend '${backend}'. Supported: copilot, claude, codex`);
+      if (!SUPPORTED_BACKENDS.includes(backend as SupportedBackend)) {
+        throw new Error(`Unknown backend '${backend}'. Supported: ${SUPPORTED_BACKENDS.join(", ")}`);
       }
       return {
         key,
@@ -291,6 +354,14 @@ export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): Prepar
     }
 
     case "ATTACHE_WORKFOLDER": {
+      if (isClearRequest(value)) {
+        return {
+          key,
+          persistedValue: null,
+          restartRequired: true,
+          apply: () => {},
+        };
+      }
       const workfolder = normalizeNonEmptyString(value, key);
       return {
         key,
@@ -301,8 +372,43 @@ export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): Prepar
     }
 
     case "TELEGRAM_BOT_TOKEN":
+      if (isClearRequest(value)) {
+        return {
+          key,
+          persistedValue: null,
+          restartRequired: true,
+          apply: () => {},
+        };
+      }
+      return {
+        key,
+        persistedValue: normalizeNonEmptyString(value, key),
+        restartRequired: true,
+        apply: () => {},
+      };
+
+    case "ATTACHE_SELF_EDIT": {
+      const enabled = !isClearRequest(value) && value.trim() === "1";
+      return {
+        key,
+        persistedValue: enabled ? "1" : null,
+        restartRequired: false,
+        apply: () => {
+          raw.SELF_EDIT_ENABLED = enabled ? "1" : undefined;
+        },
+      };
+    }
+
     case "ANTHROPIC_API_KEY":
     case "OPENAI_API_KEY": {
+      if (isClearRequest(value)) {
+        return {
+          key,
+          persistedValue: null,
+          restartRequired: true,
+          apply: () => {},
+        };
+      }
       const persistedValue = normalizeNonEmptyString(value, key);
       return {
         key,
@@ -311,11 +417,22 @@ export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): Prepar
         apply: () => {},
       };
     }
+
+    default:
+      return assertNever(key);
   }
 }
 
+function assertNever(value: never): never {
+  throw new Error(`Unhandled config key: ${String(value)}`);
+}
+
 export async function persistConfigUpdate(update: PreparedConfigUpdate): Promise<void> {
-  persistEnvVar(update.key, update.persistedValue);
+  if (update.persistedValue === null) {
+    clearEnvVar(update.key);
+  } else {
+    persistEnvVar(update.key, update.persistedValue);
+  }
   await update.apply();
 }
 

@@ -84,17 +84,25 @@
         else
         {
             @* ── Worker logs ── *@
-            @if (State.WorkerLogs is null)
+            @if (State.SelectedWorker is null)
+            {
+                <div class="empty-state">Select a worker to view its output.</div>
+            }
+            else if (State.WorkerLogs is null)
             {
                 <div class="empty-state">Loading worker logs...</div>
             }
             else if (State.WorkerLogs.Length == 0)
             {
-                <div class="empty-state">No output yet.</div>
+                <div class="empty-state">@WorkerEmptyStateMessage</div>
             }
             else
             {
                 <div class="worker-logs">
+                    @if (!string.IsNullOrWhiteSpace(WorkerStatusMessage))
+                    {
+                        <div class="timestamp" style="margin-bottom: 8px;">@WorkerStatusMessage</div>
+                    }
                     <MarkdownBlock Content="@State.WorkerLogs" />
                 </div>
             }
@@ -118,6 +126,7 @@
     {
         ["tui"] = "GUI",
         ["telegram"] = "TELE",
+        ["background"] = "BG",
         ["cron"] = "CRON",
     };
 
@@ -128,9 +137,71 @@
     {
         "tui" => 0,
         "telegram" => 1,
-        "cron" => 2,
-        _ => 3,
+        "background" => 2,
+        "cron" => 3,
+        _ => 4,
     };
+
+    private string WorkerStatusMessage
+    {
+        get
+        {
+            var worker = State.SelectedWorker;
+            if (worker is null)
+                return "";
+
+            if (worker.Status == "running")
+            {
+                if (worker.ElapsedMs is not null)
+                {
+                    var elapsed = TimeSpan.FromMilliseconds(worker.ElapsedMs.Value);
+                    return $"Running for {FormatDuration(elapsed)}. Waiting for output...";
+                }
+
+                if (worker.StartedAt is not null)
+                {
+                    var started = DateTimeOffset.FromUnixTimeMilliseconds(worker.StartedAt.Value).ToLocalTime();
+                    return $"Running since {started:HH:mm}. Waiting for output...";
+                }
+
+                return "Running. Waiting for output...";
+            }
+
+            if (worker.Status == "error" && !string.IsNullOrWhiteSpace(worker.LastOutput))
+            {
+                return "Last run ended with an error.";
+            }
+
+            return "";
+        }
+    }
+
+    private string WorkerEmptyStateMessage
+    {
+        get
+        {
+            var worker = State.SelectedWorker;
+            if (worker is null)
+                return "Select a worker to view its output.";
+
+            if (worker.Status == "running")
+                return WorkerStatusMessage;
+
+            if (worker.Status == "error")
+                return "Last run ended with an error.";
+
+            return "No output yet.";
+        }
+    }
+
+    private static string FormatDuration(TimeSpan duration)
+    {
+        if (duration.TotalHours >= 1)
+            return $"{(int)duration.TotalHours}h {duration.Minutes}m";
+        if (duration.TotalMinutes >= 1)
+            return $"{(int)duration.TotalMinutes}m {duration.Seconds}s";
+        return $"{duration.Seconds}s";
+    }
 
     private int _lastEntryCount;
     private string? _lastStreamingContent;
@@ -149,6 +220,7 @@
         {
             _lastWorkerId = State.SelectedWorkerId;
             StopWorkerLogPolling();
+            State.WorkerLogs = null;
             if (_lastWorkerId is not null)
             {
                 _ = FetchWorkerLogsAsync();

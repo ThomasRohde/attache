@@ -2,29 +2,11 @@
 
 Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gaps in the current architecture.
 
----
-
-## 1. Cron Scheduler / Scheduled Tasks
-
-**What**: Built-in task scheduling so Attache can run recurring jobs autonomously — daily reports, nightly backups, periodic monitoring, morning briefings.
-
-**Why**: Attache already runs as a 24/7 daemon, making it a natural fit for scheduled automation. Hermes Agent's cron scheduler is one of its most compelling features — it turns the agent from reactive to proactive.
-
-**Implementation sketch**:
-- New `schedules` table in SQLite: `id`, `cron_expression`, `prompt`, `channel` (telegram/tui), `enabled`, `last_run`, `next_run`
-- New tools: `schedule_task`, `list_schedules`, `remove_schedule`
-- A `node-cron` or custom cron evaluator in the daemon loop that fires prompts into `sendToOrchestrator` at the right times
-- Results delivered to the specified channel (or all channels)
-- API endpoints: `GET /schedules`, `POST /schedules`, `DELETE /schedules/:id`
-
-**Example use cases**:
-- "Every morning at 8am, check my GitHub notifications and summarize them on Telegram"
-- "Every Friday at 5pm, generate a weekly summary of what we worked on"
-- "Every 6 hours, check if the staging server is healthy"
+> Status note: cron scheduling is already implemented in the daemon (`src/cron/scheduler.ts`) and exposed through the `/cron` API. The backlog below only covers remaining feature ideas.
 
 ---
 
-## 2. Sub-Agent Spawning (Parallel Workstreams)
+## 1. Sub-Agent Spawning (Parallel Workstreams)
 
 **What**: Allow the orchestrator to spawn isolated sub-agents that each get their own conversation context and can work in parallel, then report back.
 
@@ -38,7 +20,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 3. Autonomous Skill Self-Improvement
+## 2. Autonomous Skill Self-Improvement
 
 **What**: When Attache uses a skill and encounters issues or discovers a better approach, it should be able to update the skill's SKILL.md automatically.
 
@@ -52,7 +34,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 4. Enhanced Memory with FTS5 and Summarization
+## 3. Enhanced Memory with FTS5 and Summarization
 
 **What**: Upgrade the memory system from simple `LIKE` search to SQLite FTS5 full-text search, and add periodic memory summarization/consolidation.
 
@@ -66,7 +48,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 5. Multi-Platform Messaging (Discord, Slack, Signal)
+## 4. Multi-Platform Messaging (Discord, Slack, Signal)
 
 **What**: Extend beyond Telegram to support Discord, Slack, and potentially Signal/WhatsApp as input channels.
 
@@ -81,7 +63,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 6. Webhook / Event System
+## 5. Webhook / Event System
 
 **What**: Allow external services to push events into Attache via webhooks, triggering automated responses.
 
@@ -100,7 +82,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 7. User Modeling / Personality Adaptation
+## 6. User Modeling / Personality Adaptation
 
 **What**: Build a persistent user profile that evolves over time — communication style preferences, expertise level, working hours, project context.
 
@@ -115,7 +97,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 8. Skill Hub Integration / Skill Marketplace
+## 7. Skill Hub Integration / Skill Marketplace
 
 **What**: Connect to a community skill repository (like Hermes Agent's agentskills.io or skills.sh) for one-click skill installation.
 
@@ -130,7 +112,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 9. Docker / Sandboxed Execution Backend
+## 8. Docker / Sandboxed Execution Backend
 
 **What**: Run worker sessions inside Docker containers or other sandboxed environments for security isolation.
 
@@ -145,7 +127,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 10. Web UI (Browser-Based Interface)
+## 9. Web UI (Browser-Based Interface)
 
 **What**: A lightweight web interface accessible from any browser, complementing the desktop Blazor GUI and Telegram.
 
@@ -160,7 +142,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 11. Multi-Model Reasoning / Model Routing
+## 10. Multi-Model Reasoning / Model Routing
 
 **What**: Use different models for different tasks — a fast model for quick answers, a powerful model for complex coding, a specialized model for code review.
 
@@ -175,7 +157,7 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 ---
 
-## 12. File Watch / Project Monitor
+## 11. File Watch / Project Monitor
 
 **What**: Watch directories for changes and proactively notify the user or take action.
 
@@ -198,18 +180,17 @@ Inspired by [Hermes Agent](https://github.com/NousResearch/hermes-agent) and gap
 
 | # | Feature | Impact | Effort | Priority |
 |---|---------|--------|--------|----------|
-| 1 | Cron Scheduler | High | Medium | **P0** |
-| 10 | Web UI | High | Medium | **P0** |
-| 6 | Webhook System | High | Low | **P1** |
-| 4 | FTS5 Memory | Medium | Low | **P1** |
-| 2 | Sub-Agent Spawning | High | Medium | **P1** |
-| 11 | Multi-Model Routing | Medium | Low | **P1** |
-| 5 | Multi-Platform Messaging | Medium | Medium | **P2** |
-| 3 | Skill Self-Improvement | Medium | Medium | **P2** |
-| 7 | User Modeling | Medium | Medium | **P2** |
-| 8 | Skill Hub Integration | Medium | Medium | **P2** |
-| 9 | Docker Sandbox | Medium | High | **P3** |
-| 12 | File Watch | Low | Medium | **P3** |
+| 9 | Web UI | High | Medium | **P0** |
+| 5 | Webhook System | High | Low | **P1** |
+| 3 | FTS5 Memory | Medium | Low | **P1** |
+| 1 | Sub-Agent Spawning | High | Medium | **P1** |
+| 10 | Multi-Model Routing | Medium | Low | **P1** |
+| 4 | Multi-Platform Messaging | Medium | Medium | **P2** |
+| 2 | Skill Self-Improvement | Medium | Medium | **P2** |
+| 6 | User Modeling | Medium | Medium | **P2** |
+| 7 | Skill Hub Integration | Medium | Medium | **P2** |
+| 8 | Docker Sandbox | Medium | High | **P3** |
+| 11 | File Watch | Low | Medium | **P3** |
 
 ---
 

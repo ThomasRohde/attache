@@ -38,14 +38,10 @@ copilot login
 ### 2. Launch the GUI
 
 ```bash
-# From source (development)
-dotnet run --project gui/AttacheGui.csproj
-
-# Or if installed via npm, launch from:
-# %LOCALAPPDATA%\Programs\attache-gui\AttacheGui.exe
+npm start
 ```
 
-The GUI auto-starts the daemon if it isn't running. On first launch, a setup wizard walks you through choosing a display name, default model, and optional Telegram integration. No terminal required.
+This builds the TypeScript daemon, launches the GUI from source, and lets the GUI start the daemon on demand. On first launch, a setup wizard walks you through choosing a display name, default model, and optional Telegram integration.
 
 ### 3. Talk to Attache
 
@@ -100,7 +96,7 @@ The GUI is a .NET 10 Blazor Hybrid app (`gui/`) with a WinForms host and BlazorW
 
 ## Configuration
 
-Stored in `~/.attache/.env`, editable via the GUI Settings dialog or setup wizard on first launch.
+Stored in `~/.attache/.env`. The GUI currently exposes only the following settings through the Settings dialog or setup wizard: provider, model, display name, workfolder, Telegram bot token, and Telegram user ID. Other values must be edited manually.
 
 | Key | Description | Default |
 | --- | --- | --- |
@@ -117,22 +113,13 @@ Stored in `~/.attache/.env`, editable via the GUI Settings dialog or setup wizar
 | `ANTHROPIC_API_KEY` | API key (required for Claude backend) | -- |
 | `OPENAI_API_KEY` | API key (required for Codex backend) | -- |
 
-### Key paths
-
-| Purpose | Path |
-| --- | --- |
-| Config env file | `~/.attache/.env` |
-| SQLite database | `~/.attache/attache.db` |
-| API bearer token | `~/.attache/api-token` |
-| Session state | `~/.attache/sessions/` |
-| User skills | `~/.attache/skills/` |
-
 ## Daemon API
 
 Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 
 - `/status` is public
 - All other routes require `Authorization: Bearer <token>` (from `~/.attache/api-token`)
+- `/stream` must be opened before `/message`; the stream returns a `connectionId` that the client must include in each message request
 
 | Method | Path | Description |
 | --- | --- | --- |
@@ -148,7 +135,7 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | `POST` | `/workfolder` | Change workfolder (triggers restart) |
 | `POST` | `/config` | Update `.env` config values |
 | `GET` | `/stream` | SSE event stream |
-| `POST` | `/message` | Submit a prompt |
+| `POST` | `/message` | Submit a prompt (requires an active `/stream` connection) |
 | `POST` | `/cancel` | Cancel in-flight message |
 | `GET` | `/model` | Current model |
 | `POST` | `/model` | Switch model |
@@ -167,6 +154,16 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | `DELETE` | `/cron/:id` | Delete a cron job |
 | `GET` | `/capabilities` | API capabilities manifest |
 | `POST` | `/restart` | Restart daemon |
+
+### Key paths
+
+| Purpose | Path |
+| --- | --- |
+| Config env file | `~/.attache/.env` |
+| SQLite database | `~/.attache/attache.db` |
+| API bearer token | `~/.attache/api-token` |
+| Session state | `~/.attache/sessions/` |
+| User skills | `~/.attache/skills/` |
 
 ## Architecture
 
@@ -204,7 +201,7 @@ npm run daemon
 # Full build (TypeScript + GUI exe)
 npm run build
 
-# Start daemon + launch GUI
+# Build TypeScript daemon and launch the GUI from source
 npm start
 
 # Build TypeScript only

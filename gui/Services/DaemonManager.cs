@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 namespace AttacheGui.Services;
@@ -61,11 +62,44 @@ public class DaemonManager
 
         try
         {
-            _process.Kill(entireProcessTree: true);
-            _process.WaitForExit(3000);
+            if (!TryGracefulStop(_process))
+            {
+                _process.Kill(entireProcessTree: true);
+            }
+
+            _process.WaitForExit(5000);
         }
         catch { }
         finally { _process = null; }
+    }
+
+    private static bool TryGracefulStop(Process process)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            if (!AttachConsole((uint)process.Id))
+                return false;
+
+            try
+            {
+                SetConsoleCtrlHandler(null, true);
+                return GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0);
+            }
+            finally
+            {
+                SetConsoleCtrlHandler(null, false);
+                FreeConsole();
+            }
+        }
+
+        try
+        {
+            return process.CloseMainWindow();
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool TryResolveCommand(out string fileName, out string arguments)
@@ -167,4 +201,20 @@ public class DaemonManager
         };
         return candidates.FirstOrDefault(File.Exists);
     }
+
+    private const uint CTRL_C_EVENT = 0;
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(uint dwProcessId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool FreeConsole();
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool GenerateConsoleCtrlEvent(uint dwCtrlEvent, uint dwProcessGroupId);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool SetConsoleCtrlHandler(ConsoleCtrlDelegate? handler, bool add);
+
+    private delegate bool ConsoleCtrlDelegate(uint ctrlType);
 }
