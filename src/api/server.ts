@@ -13,7 +13,7 @@ import { getEffectiveIdentity, LOG_PREFIX } from "../identity.js";
 import { API_TOKEN_PATH, SESSIONS_DIR, ensureAttacheHome } from "../paths.js";
 import { join, sep, resolve } from "path";
 import { homedir, tmpdir } from "os";
-import { TOOL_REGISTRY, BLOCKED_WORKER_DIRS, MAX_CONCURRENT_WORKERS, type WorkerInfo } from "../copilot/tools.js";
+import { TOOL_REGISTRY, BLOCKED_WORKER_DIRS, MAX_CONCURRENT_WORKERS, destroyWorker, type WorkerInfo } from "../copilot/tools.js";
 import { DAEMON_VERSION } from "../update.js";
 import { getBackendClient, getBackendName, getStaticModels } from "../backend/registry.js";
 import { getCurrentSourceChannel } from "../copilot/orchestrator.js";
@@ -347,6 +347,7 @@ app.post("/workers", async (req: Request, res: Response) => {
     ).run(name, session.sessionId, workingDir);
 
     if (initial_prompt) {
+      worker.autoDestroy = true;
       worker.status = "running";
       worker.startedAt = Date.now();
       db.prepare(
@@ -368,6 +369,7 @@ app.post("/workers", async (req: Request, res: Response) => {
           persistWorkerOutput(worker, result.content || streamedOutput || "No response");
           db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(name);
           feedBackgroundResult(name, worker.lastOutput ?? "No response");
+          if (worker.autoDestroy) destroyWorker(workers, name);
         })
         .catch((err) => {
           unsubDelta();
@@ -377,6 +379,7 @@ app.post("/workers", async (req: Request, res: Response) => {
           persistWorkerOutput(worker, `Worker '${name}' failed: ${msg}`);
           db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(name);
           feedBackgroundResult(name, worker.lastOutput ?? `Worker '${name}' failed: ${msg}`);
+          if (worker.autoDestroy) destroyWorker(workers, name);
         });
 
       res.json({ status: "dispatched", name, workingDir });
@@ -433,6 +436,7 @@ app.post("/workers/:id/prompt", async (req: Request, res: Response) => {
       persistWorkerOutput(worker, result.content || streamedOutput || "No response");
       db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(workerId);
       feedBackgroundResult(workerId, worker.lastOutput ?? "No response");
+      if (worker.autoDestroy) destroyWorker(getWorkers(), workerId);
     })
     .catch((err) => {
       unsubDelta();
@@ -442,6 +446,7 @@ app.post("/workers/:id/prompt", async (req: Request, res: Response) => {
       persistWorkerOutput(worker, `Worker '${workerId}' failed: ${msg}`);
       db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(workerId);
       feedBackgroundResult(workerId, worker.lastOutput ?? `Worker '${workerId}' failed: ${msg}`);
+      if (worker.autoDestroy) destroyWorker(getWorkers(), workerId);
     });
 
   res.json({ status: "dispatched", name: workerId });

@@ -82,12 +82,24 @@ export interface WorkerInfo {
   originChannel?: "telegram" | "tui";
   /** True when the worker was explicitly cancelled and should not emit completion notifications. */
   cancelled?: boolean;
+  /** When true, the worker is automatically destroyed after its task completes. */
+  autoDestroy?: boolean;
 }
 
 export interface ToolDeps {
   client: BackendClient;
   workers: Map<string, WorkerInfo>;
   onWorkerComplete: (name: string, result: string) => void;
+}
+
+/** Destroy a worker session and remove it from the map and database. */
+export function destroyWorker(workers: Map<string, WorkerInfo>, name: string): void {
+  const worker = workers.get(name);
+  if (!worker) return;
+  try { worker.session.destroy(); } catch { /* session may already be gone */ }
+  workers.delete(name);
+  const db = getDb();
+  db.prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(name);
 }
 
 export function createTools(deps: ToolDeps): Tool<any>[] {
@@ -145,6 +157,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         ).run(args.name, session.sessionId, workingDir);
 
         if (args.initial_prompt) {
+          worker.autoDestroy = true;
           worker.status = "running";
           worker.startedAt = Date.now();
           db.prepare(
@@ -172,6 +185,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
             persistWorkerOutput(worker, result.content || streamedOutput || "No response");
             db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
             deps.onWorkerComplete(args.name, worker.lastOutput ?? "No response");
+            if (worker.autoDestroy) destroyWorker(deps.workers, args.name);
           }).catch((err) => {
             unsubDelta();
             if (worker.cancelled) {
@@ -182,6 +196,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
             persistWorkerOutput(worker, errMsg);
             db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
             deps.onWorkerComplete(args.name, worker.lastOutput ?? errMsg);
+            if (worker.autoDestroy) destroyWorker(deps.workers, args.name);
           });
 
           return `Worker '${args.name}' created in ${workingDir}. Task dispatched — I'll notify you when it's done.`;
@@ -233,6 +248,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           persistWorkerOutput(worker, result.content || streamedOutput || "No response");
           db.prepare(`UPDATE worker_sessions SET status = 'idle', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
           deps.onWorkerComplete(args.name, worker.lastOutput ?? "No response");
+          if (worker.autoDestroy) destroyWorker(deps.workers, args.name);
         }).catch((err) => {
           unsubDelta();
           if (worker.cancelled) {
@@ -243,6 +259,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           persistWorkerOutput(worker, errMsg);
           db.prepare(`UPDATE worker_sessions SET status = 'error', updated_at = CURRENT_TIMESTAMP WHERE name = ?`).run(args.name);
           deps.onWorkerComplete(args.name, worker.lastOutput ?? errMsg);
+          if (worker.autoDestroy) destroyWorker(deps.workers, args.name);
         });
 
         return `Task dispatched to worker '${args.name}'. I'll notify you when it's done.`;
