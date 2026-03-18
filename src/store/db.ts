@@ -53,6 +53,40 @@ export function getDb(): Database.Database {
         last_accessed DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `);
+    // ── FTS5 full-text index for memories ──────────────────────
+    db.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+        content,
+        content=memories,
+        content_rowid=id,
+        tokenize='porter unicode61'
+      )
+    `);
+    // Keep FTS5 index in sync via triggers
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+        INSERT INTO memories_fts(rowid, content) VALUES (new.id, new.content);
+      END
+    `);
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+      END
+    `);
+    db.exec(`
+      CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE OF content ON memories BEGIN
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES('delete', old.id, old.content);
+        INSERT INTO memories_fts(memories_fts, rowid, content) VALUES (new.id, new.content);
+      END
+    `);
+    // Populate FTS5 from any existing memories not yet indexed
+    {
+      const ftsCount = (db.prepare(`SELECT COUNT(*) as c FROM memories_fts`).get() as { c: number }).c;
+      const memCount = (db.prepare(`SELECT COUNT(*) as c FROM memories`).get() as { c: number }).c;
+      if (memCount > 0 && ftsCount === 0) {
+        db.exec(`INSERT INTO memories_fts(rowid, content) SELECT id, content FROM memories`);
+      }
+    }
     db.exec(`
       CREATE TABLE IF NOT EXISTS skill_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -207,31 +241,64 @@ export function addMemory(
   return result.lastInsertRowid as number;
 }
 
-/** Search memories by keyword and/or category. */
+/** Search memories by keyword and/or category.
+ *  Uses FTS5 full-text search when a keyword is provided (supports boolean
+ *  operators, proximity, prefix matching).  Falls back to a simple scan when
+ *  only a category filter is given.
+ */
 export function searchMemories(
   keyword?: string,
   category?: string,
   limit = 20
 ): { id: number; category: string; content: string; source: string; created_at: string }[] {
   const db = getDb();
-  const conditions: string[] = [];
-  const params: (string | number)[] = [];
+
+  let rows: { id: number; category: string; content: string; source: string; created_at: string }[];
 
   if (keyword) {
-    conditions.push(`content LIKE ?`);
-    params.push(`%${keyword}%`);
-  }
-  if (category) {
-    conditions.push(`category = ?`);
-    params.push(category);
-  }
+    // Build an FTS5 query: add implicit prefix matching (*) to each bare term
+    // so "deploy" also matches "deployment", while preserving explicit operators
+    // like AND, OR, NOT, and quoted phrases the caller may have used.
+    const ftsQuery = keyword
+      .split(/\s+/)
+      .map((tok) => {
+        // Pass through FTS5 operators and quoted phrases
+        if (/^(AND|OR|NOT)$/i.test(tok) || tok.startsWith('"')) return tok;
+        // Already has a prefix wildcard
+        if (tok.endsWith("*")) return tok;
+        return tok + "*";
+      })
+      .join(" ");
 
-  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
-  params.push(limit);
+    const catFilter = category ? `AND m.category = ?` : "";
+    const params: (string | number)[] = [ftsQuery];
+    if (category) params.push(category);
+    params.push(limit);
 
-  const rows = db.prepare(
-    `SELECT id, category, content, source, created_at FROM memories ${where} ORDER BY last_accessed DESC LIMIT ?`
-  ).all(...params) as { id: number; category: string; content: string; source: string; created_at: string }[];
+    rows = db.prepare(`
+      SELECT m.id, m.category, m.content, m.source, m.created_at
+      FROM memories_fts f
+      JOIN memories m ON m.id = f.rowid
+      WHERE memories_fts MATCH ?
+      ${catFilter}
+      ORDER BY f.rank, m.last_accessed DESC
+      LIMIT ?
+    `).all(...params) as typeof rows;
+  } else {
+    // No keyword — simple category scan
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+    if (category) {
+      conditions.push(`category = ?`);
+      params.push(category);
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    params.push(limit);
+
+    rows = db.prepare(
+      `SELECT id, category, content, source, created_at FROM memories ${where} ORDER BY last_accessed DESC LIMIT ?`
+    ).all(...params) as typeof rows;
+  }
 
   // Update last_accessed for returned memories
   if (rows.length > 0) {

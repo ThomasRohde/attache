@@ -510,10 +510,15 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
     defineTool("recall", {
       description:
         "Search Attache's long-term memory for stored facts, preferences, or information. " +
+        "Uses full-text search with relevance ranking — supports prefix matching, boolean " +
+        "operators (AND, OR, NOT), and quoted phrases. " +
         "Use when you need to look up something the user told you before, or when the user " +
         "asks 'do you remember...?' or 'what do you know about...?'",
       parameters: z.object({
-        keyword: z.string().optional().describe("Search term to match against memory content"),
+        keyword: z.string().optional().describe(
+          "Full-text search query. Supports prefix matching (auto-applied), " +
+          "boolean operators (AND, OR, NOT), and quoted phrases for exact match."
+        ),
         category: z.enum(["preference", "fact", "project", "person", "routine"]).optional()
           .describe("Optional: filter by category"),
       }),

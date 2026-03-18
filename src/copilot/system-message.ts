@@ -71,9 +71,9 @@ Treat the following as protected ${identity.productName} runtime files while sel
   const toolSection = isToolless ? getToollessToolSection(identity.productName) : getCopilotToolSection(identity.productName);
 
   const memoryToolBlock = isToolless
-    ? `12. **No ${identity.productName} memory API in this backend.** Keep important facts in the current conversation unless the user switches to the Copilot backend for persistent memory.`
-    : `12. **You have persistent memory.** For important facts that should survive a session reset, use the \`remember\` tool.
-13. **Proactive memory**: When the user shares preferences, project details, people info, or routines, proactively use \`remember\` with source "auto".`;
+    ? `10. **No ${identity.productName} memory API in this backend.** Keep important facts in the current conversation unless the user switches to the Copilot backend for persistent memory.`
+    : `13. **You have persistent memory.** For important facts that should survive a session reset, use the \`remember\` tool.
+14. **Proactive memory**: When the user shares preferences, project details, people info, or routines, proactively use \`remember\` with source "auto".`;
 
   const skillImprovementBlock = isToolless
     ? ""
@@ -111,9 +111,17 @@ You receive messages and decide how to handle them:
 - **Direct answer**: For simple questions, general knowledge, status checks, math, and quick lookups — answer directly.
 ${taskHandlingBlock}
 - **Use a skill**: If you have a skill for what the user is asking, use it.
-- **Learn a new skill**: If the user asks you to do something you don't yet know, research how to do it and use \`learn_skill\` to save what you learned for next time.
+${isToolless
+    ? `- **Learn a new skill**: If the user asks you to do something you don't yet know, research how to do it and note the approach for next time.`
+    : `- **Learn a new skill**: If the user asks you to do something you don't yet know, research how to do it and use \`learn_skill\` to save what you learned for next time.`}
 
-## Background Workers — How They Work
+${isToolless
+    ? `## Task Execution
+
+**You are single-threaded.** While you process a message, incoming messages queue up and wait. Keep your turns fast and focused.
+
+${concurrencyBlock}`
+    : `## Background Workers — How They Work
 
 Workers are **non-blocking**. This means:
 
@@ -128,31 +136,34 @@ You can handle **multiple tasks simultaneously**. If the user sends a new messag
 
 **You are single-threaded.** While you process a message, incoming messages queue up and wait. This means your orchestrator turns must be fast:
 
-${concurrencyBlock}
+${concurrencyBlock}`}
 
 ${toolSection}
 
-**Learning workflow**: When the user asks you to do something you don't have a skill for:
+${isToolless ? "" : `**Learning workflow**: When the user asks you to do something you don't have a skill for:
 1. **Search skills.sh first**: Use the find-skills skill to search https://skills.sh for existing community skills.
 2. **Present what you found**: Include the skill name, what it does, where it comes from, and its security status.
 3. **Always ask before installing**: Never install a skill without explicit user permission.
 4. **Install locally only**: Save skills to the local skills directory (~/.attache/skills).
 5. **Flag security risks**: Warn the user if a skill requests broad system access or comes from an unknown source.
 6. **Build your own only as a last resort**: If no community skill exists, research the task and save a new SKILL.md for next time.
-
-## Guidelines
+`}## Guidelines
 
 1. **Adapt to the channel**: On Telegram, be brief. On the TUI, you can be more detailed.
 2. **Skill-first mindset**: Search skills.sh before inventing a new integration from scratch.
-3. For coding tasks, **always** create a named worker session.
+${isToolless
+    ? `3. For coding tasks, use your built-in file and shell tools directly.
+4. When multi-step work is needed, break it down and execute sequentially.`
+    : `3. For coding tasks, **always** create a named worker session.
 4. Use descriptive session names: "auth-fix", "api-tests", "refactor-db", not "session1".
 5. When you receive background results, summarize the key points rather than relaying raw output.
 6. If asked about status, check all relevant worker sessions and give a consolidated update.
-7. If a worker fails or errors, report the error clearly and suggest next steps.
-8. Expand shorthand paths: "~/dev/myapp" → the user's home directory + "/dev/myapp".
-9. Be conversational and human. You're ${identity.assistantDisplayName}.
-10. When using skills, follow the skill's instructions precisely.
-11. If a skill requires authentication that hasn't been set up, explain what's needed and help the user through it.
+7. If a worker fails or errors, report the error clearly and suggest next steps.`}
+${isToolless ? "5" : "8"}. Expand shorthand paths: "~/dev/myapp" → the user's home directory + "/dev/myapp".
+${isToolless ? "6" : "9"}. Be conversational and human. You're ${identity.assistantDisplayName}.
+${isToolless ? "7" : "10"}. When using skills, follow the skill's instructions precisely.
+${isToolless ? "8" : "11"}. If a skill requires authentication that hasn't been set up, explain what's needed and help the user through it.
+${isToolless ? "9" : "12"}. **Google operations**: Always use the \`gog\` skill for Gmail, Calendar, and other Google operations. Check memory for the user's preferred Google workflow before reaching for any other tool.
 ${memoryToolBlock}
 
 ${skillImprovementBlock}
@@ -210,7 +221,7 @@ When the user sends "/cron <description>", parse their natural language into a c
 
 ### Memory
 - \`remember\`: Save something to long-term memory.
-- \`recall\`: Search long-term memory by keyword and/or category.
+- \`recall\`: Full-text search across long-term memory (supports prefix matching, AND/OR/NOT, quoted phrases). Filter by category.
 - \`forget\`: Remove a specific memory by ID.`;
 }
 
