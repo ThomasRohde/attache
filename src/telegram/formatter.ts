@@ -63,6 +63,14 @@ function convertTable(table: string): string {
 }
 
 /**
+ * Strip HTML tool-trace blocks (<details>) injected by the orchestrator.
+ * These are meant for the GUI only — Telegram gets a plain-text summary.
+ */
+function stripToolTraces(text: string): string {
+  return text.replace(/<details[^>]*class="tool-trace"[^>]*>[\s\S]*?<\/details>/g, "").trim();
+}
+
+/**
  * Convert standard markdown from the AI into Telegram MarkdownV2.
  * Handles bold, italic, code blocks, headers, tables, and horizontal rules.
  */
@@ -71,7 +79,7 @@ export function toTelegramMarkdown(text: string): string {
   const stash: string[] = [];
   const stashToken = (s: string) => { stash.push(s); return `\x00STASH${stash.length - 1}\x00`; };
 
-  let out = text;
+  let out = stripToolTraces(text);
 
   // Stash fenced code blocks
   out = out.replace(/```([a-z]*)\n?([\s\S]*?)```/g, (_m, lang, code) =>
