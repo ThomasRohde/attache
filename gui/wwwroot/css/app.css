@@ -295,6 +295,9 @@ html, body {
 
 .channel-tab {
     position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     padding: 0 14px;
     height: var(--pane-header-height);
     background: none;
@@ -307,6 +310,10 @@ html, body {
     letter-spacing: 0.5px;
     cursor: pointer;
     transition: color var(--duration) var(--ease-out);
+}
+
+.channel-tab svg {
+    flex-shrink: 0;
 }
 
 .channel-tab::after {

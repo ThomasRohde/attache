@@ -13,6 +13,15 @@ import { LOG_PREFIX } from "../../../identity.js";
 import { ATTACHE_ENV_PATH } from "../../../paths.js";
 import { readFileSync } from "fs";
 
+/** Map Claude Code SDK shorthand aliases to full API model IDs. */
+const CLAUDE_ALIAS_MAP: Record<string, string> = {
+  "sonnet": "claude-sonnet-4-6",
+  "opus": "claude-opus-4-6",
+  "haiku": "claude-haiku-4-5-20251001",
+  "sonnet[1m]": "claude-sonnet-4-6",     // 1M context variant uses same model ID
+  "opus[1m]": "claude-opus-4-6",         // 1M context variant uses same model ID
+};
+
 const DEFAULT_ALLOWED_TOOLS = [
   "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch", "Skill",
 ];
@@ -110,14 +119,31 @@ export class ClaudeBackendClient implements BackendClient {
       if (trimmed) console.error(`${LOG_PREFIX} [claude-sdk] ${trimmed}`);
     };
 
-    // Opportunistic model cache — update when SDK reports available models
+    // Opportunistic model cache — update when SDK reports available models.
+    // The SDK returns shorthand aliases (e.g. "sonnet", "haiku", "sonnet[1m]")
+    // which work internally but confuse users and cause issues when persisted.
+    // We map known aliases to full API model IDs and skip unknown ones.
     opts.onModelsDiscovered = (models) => {
-      this.cachedModels = models.map((m) => ({
-        id: m.value,
-        name: m.displayName || m.value,
-        multiplier: -1,
-        enabled: true,
-      }));
+      const mapped: typeof this.cachedModels & {} = [];
+      for (const m of models) {
+        const fullId = CLAUDE_ALIAS_MAP[m.value];
+        if (fullId) {
+          mapped.push({
+            id: fullId,
+            name: m.displayName || fullId,
+            multiplier: -1,
+            enabled: true,
+          });
+        }
+        // Skip aliases we can't map — they'd cause confusing model IDs
+      }
+      // Ensure static fallback models are always included
+      for (const fallback of CLAUDE_MODELS) {
+        if (!mapped.some((c) => c.id === fallback.id)) {
+          mapped.push(fallback);
+        }
+      }
+      this.cachedModels = mapped;
       console.log(`${LOG_PREFIX} Cached ${this.cachedModels.length} models from Claude SDK`);
     };
 
