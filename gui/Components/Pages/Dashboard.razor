@@ -58,6 +58,9 @@
         Sse.CronJobChanged += OnCronJobChanged;
         Sse.CronExecutionComplete += OnCronExecutionComplete;
 
+        // Load GUI-local preferences
+        State.LoadGuiSettings();
+
         // Always register cron as a known channel
         State.KnownChannels.Add("cron");
 

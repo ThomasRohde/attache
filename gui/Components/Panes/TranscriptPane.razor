@@ -3,7 +3,7 @@
 @inject IJSRuntime JS
 @implements IDisposable
 
-<div class="pane">
+<div class="pane @(State.ShowToolTraces ? "" : "hide-tool-traces")">
     @if (State.ViewingOrchestrator)
     {
         <div class="pane-header channel-tabs">

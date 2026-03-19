@@ -57,6 +57,15 @@
                         </div>
                         <div class="hint">Allow the assistant to modify its own source code and configuration.</div>
                     </div>
+                    <div class="form-group">
+                        <div style="margin-top: 4px;">
+                            <label style="display: inline-flex; align-items: center; gap: 6px; font-weight: normal; cursor: pointer;">
+                                <input type="checkbox" checked="@State.ShowToolTraces" @onchange="OnToolTracesChanged" style="width: auto;" />
+                                Show Tool Traces
+                            </label>
+                        </div>
+                        <div class="hint">Show collapsible tool call details in the conversation transcript.</div>
+                    </div>
                     break;
 
                 case "workfolder":
@@ -313,6 +322,11 @@
     {
         await Api.PostRestartAsync();
         await OnClose.InvokeAsync();
+    }
+
+    private void OnToolTracesChanged(ChangeEventArgs e)
+    {
+        State.ShowToolTraces = e.Value is true or "true" or "True";
     }
 
     private async Task OnBackendChanged(ChangeEventArgs e)

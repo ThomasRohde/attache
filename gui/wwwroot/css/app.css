@@ -491,6 +491,11 @@ html, body {
     color: var(--text-secondary);
 }
 
+/* Hide tool traces when setting is off */
+.hide-tool-traces details.tool-trace {
+    display: none;
+}
+
 .streaming-cursor::after {
     content: '';
     display: inline-block;

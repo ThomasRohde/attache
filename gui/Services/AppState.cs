@@ -1,3 +1,4 @@
+using System.Text.Json;
 using AttacheGui.Models;
 
 namespace AttacheGui.Services;
@@ -8,7 +9,19 @@ public class AppState
         Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
         ".attache", ".env");
 
+    private static readonly string GuiSettingsPath = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+        ".attache", "gui-settings.json");
+
     public bool IsFirstRun { get; set; } = !File.Exists(EnvPath);
+
+    // GUI-local preferences (persisted to gui-settings.json)
+    private bool _showToolTraces = true;
+    public bool ShowToolTraces
+    {
+        get => _showToolTraces;
+        set { _showToolTraces = value; SaveGuiSettings(); NotifyStateChanged(); }
+    }
 
     public List<WorkerModel> Workers { get; set; } = [];
     public DiagnosticsModel? Diagnostics { get; set; }
@@ -136,6 +149,35 @@ public class AppState
         IsProcessing = false;
         UnreadChannels.Clear();
         NotifyStateChanged();
+    }
+
+    // --- GUI Settings Persistence ---
+
+    public void LoadGuiSettings()
+    {
+        try
+        {
+            if (File.Exists(GuiSettingsPath))
+            {
+                var json = File.ReadAllText(GuiSettingsPath);
+                var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("showToolTraces", out var val))
+                    _showToolTraces = val.GetBoolean();
+            }
+        }
+        catch { /* use defaults */ }
+    }
+
+    private void SaveGuiSettings()
+    {
+        try
+        {
+            var dir = Path.GetDirectoryName(GuiSettingsPath);
+            if (dir != null) Directory.CreateDirectory(dir);
+            var json = JsonSerializer.Serialize(new { showToolTraces = _showToolTraces });
+            File.WriteAllText(GuiSettingsPath, json);
+        }
+        catch { /* best-effort */ }
     }
 }
 
