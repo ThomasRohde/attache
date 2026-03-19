@@ -258,6 +258,7 @@ async function clearWorkers(): Promise<void> {
 
 /** Clear all backend-dependent session state after a reconnect/reset. */
 export async function resetForBackendReset(): Promise<void> {
+  stopHealthCheck();
   const session = orchestratorSession;
   invalidateSessionState();
   await Promise.allSettled([
@@ -271,6 +272,14 @@ export async function resetForBackendReset(): Promise<void> {
  *  fighting with the SDK's own autoRestart / reconnect logic. */
 let healthCheckMisses = 0;
 const HEALTH_CHECK_MISS_THRESHOLD = 3; // require 3 consecutive misses (~90s)
+export function stopHealthCheck(): void {
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = undefined;
+    healthCheckMisses = 0;
+  }
+}
+
 function startHealthCheck(): void {
   if (healthCheckTimer) return;
   healthCheckTimer = setInterval(async () => {

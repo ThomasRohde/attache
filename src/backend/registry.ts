@@ -31,21 +31,24 @@ export async function initBackendClient(name?: string): Promise<BackendClient> {
 
   backendName = name || "copilot";
 
+  let client: BackendClient;
   switch (backendName) {
     case "copilot":
-      backendClient = new CopilotBackendClient();
+      client = new CopilotBackendClient();
       break;
     case "claude":
-      backendClient = new ClaudeBackendClient();
+      client = new ClaudeBackendClient();
       break;
     case "codex":
-      backendClient = new CodexBackendClient();
+      client = new CodexBackendClient();
       break;
     default:
       throw new Error(`Unknown backend: '${backendName}'. Supported: copilot, claude, codex`);
   }
 
-  await backendClient.start();
+  await client.start();
+  // Only assign singleton after successful start
+  backendClient = client;
   return backendClient;
 }
 

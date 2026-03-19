@@ -70,14 +70,14 @@ export class CopilotBackendClient implements BackendClient {
 
   async createSession(config: SessionConfig): Promise<BackendSession> {
     const client = this.ensureClient();
-    const sdkConfig = this.toSdkConfig(config);
+    const sdkConfig = this.toSdkConfig(config) as any;
     const session = await client.createSession(sdkConfig);
     return new CopilotBackendSession(session);
   }
 
   async resumeSession(sessionId: string, config: SessionConfig): Promise<BackendSession> {
     const client = this.ensureClient();
-    const sdkConfig = this.toSdkConfig(config);
+    const sdkConfig = this.toSdkConfig(config) as any;
     const session = await client.resumeSession(sessionId, sdkConfig);
     return new CopilotBackendSession(session);
   }

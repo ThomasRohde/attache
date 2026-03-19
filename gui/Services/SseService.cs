@@ -7,9 +7,10 @@ namespace AttacheGui.Services;
 public class SseService : IDisposable
 {
     private readonly ApiClient _api;
+    private readonly object _lock = new();
     private CancellationTokenSource? _cts;
     private StreamReader? _reader;
-    private string? _connectionId;
+    private volatile string? _connectionId;
 
     public string? ConnectionId => _connectionId;
     public bool IsConnected => _connectionId is not null;
@@ -51,8 +52,11 @@ public class SseService : IDisposable
             {
                 Console.Error.WriteLine($"[SseService] Attempt {attempt + 1}/{maxRetries}");
                 var (connectionId, reader) = await _api.OpenSseConnectionAsync(ct);
-                _connectionId = connectionId;
-                _reader = reader;
+                lock (_lock)
+                {
+                    _connectionId = connectionId;
+                    _reader = reader;
+                }
                 Console.Error.WriteLine($"[SseService] Connected with ID: {connectionId}");
                 Connected?.Invoke();
 
@@ -157,13 +161,14 @@ public class SseService : IDisposable
             Disconnected?.Invoke($"SSE stream ended: {ex.Message}");
         }
 
-        _connectionId = null;
+        lock (_lock) { _connectionId = null; }
 
         // Auto-reconnect unless cancelled
         if (!ct.IsCancellationRequested)
         {
             Disconnected?.Invoke("Connection lost. Reconnecting...");
-            await Task.Delay(2000, CancellationToken.None);
+            try { await Task.Delay(2000, ct); }
+            catch (OperationCanceledException) { return; }
             if (!ct.IsCancellationRequested)
                 await ConnectAsync();
         }
@@ -172,9 +177,12 @@ public class SseService : IDisposable
     public void Disconnect()
     {
         _cts?.Cancel();
-        _reader?.Dispose();
-        _reader = null;
-        _connectionId = null;
+        lock (_lock)
+        {
+            _reader?.Dispose();
+            _reader = null;
+            _connectionId = null;
+        }
     }
 
     public void Dispose()

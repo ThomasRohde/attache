@@ -6,7 +6,7 @@ if (process.platform === "win32" && !("type" in process)) {
 }
 
 import { initBackendClient, stopBackendClient } from "./backend/registry.js";
-import { initOrchestrator, setMessageLogger, setProactiveNotify, getWorkers } from "./copilot/orchestrator.js";
+import { initOrchestrator, setMessageLogger, setProactiveNotify, getWorkers, stopHealthCheck } from "./copilot/orchestrator.js";
 import { startApiServer, broadcastToSSE, broadcastTranscriptEntry } from "./api/server.js";
 import { createBot, startBot, stopBot, sendProactiveMessage } from "./telegram/bot.js";
 import { getDb, closeDb } from "./store/db.js";
@@ -172,6 +172,7 @@ async function shutdown(requireConfirmationForRunningWorkers = true): Promise<vo
   }, 3000);
   forceTimer.unref();
 
+  stopHealthCheck();
   stopCronScheduler();
 
   if (config.telegramEnabled) {

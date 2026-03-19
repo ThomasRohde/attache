@@ -47,6 +47,7 @@ export class CodexBackendSession implements BackendSession {
 
   async sendAndWait(prompt: string, timeoutMs?: number, attachments?: Attachment[]): Promise<SendResult> {
     if (this._destroyed) throw new Error("Session is destroyed");
+    if (this._turnResolve) throw new Error("A turn is already in progress — concurrent sendAndWait calls are not supported");
 
     // Text fallback for attachments (Codex backend doesn't support native file attachments)
     if (attachments?.length) {

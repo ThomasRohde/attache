@@ -26,7 +26,7 @@ export function createBot(): Bot {
 
   // Auth middleware — only allow the authorized user
   bot.use(async (ctx, next) => {
-    if (config.authorizedUserId !== undefined && ctx.from?.id !== config.authorizedUserId) {
+    if (config.authorizedUserId === undefined || ctx.from?.id !== config.authorizedUserId) {
       return; // Silently ignore unauthorized users
     }
     await next();

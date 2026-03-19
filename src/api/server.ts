@@ -51,9 +51,14 @@ try {
 const app = express();
 app.use(express.json());
 
-// Bearer token authentication middleware (skip /status health check)
+// Bearer token authentication middleware
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (!apiToken || req.path === "/status") return next();
+  if (!apiToken) {
+    res.status(503).json({ error: "API token not initialized" });
+    return;
+  }
+  // /status health check is public but returns minimal info
+  if (req.path === "/status") return next();
   const auth = req.headers.authorization;
   if (!auth || auth !== `Bearer ${apiToken}`) {
     res.status(401).json({ error: "Unauthorized" });
@@ -521,13 +526,19 @@ app.get("/stream", (req: Request, res: Response) => {
 
   // Heartbeat to keep connection alive
   const heartbeat = setInterval(() => {
-    res.write(`:ping\n\n`);
+    try {
+      if (!res.writableEnded) res.write(`:ping\n\n`);
+      else cleanup();
+    } catch { cleanup(); }
   }, 20_000);
 
-  req.on("close", () => {
+  const cleanup = () => {
     clearInterval(heartbeat);
     sseClients.delete(connectionId);
-  });
+  };
+
+  res.on("error", cleanup);
+  req.on("close", cleanup);
 });
 
 // Built-in slash command interception
@@ -1320,18 +1331,31 @@ export function startApiServer(): Promise<void> {
   });
 }
 
+/** Safely write to an SSE client, removing it on error. */
+function safeSseWrite(connectionId: string, res: Response, data: string): void {
+  try {
+    if (!res.writableEnded) {
+      res.write(data);
+    }
+  } catch {
+    sseClients.delete(connectionId);
+  }
+}
+
 /** Broadcast a proactive message to all connected SSE clients (for background task completions).
  *  Uses a distinct event type so the GUI does not finalize an unrelated foreground response. */
 export function broadcastToSSE(text: string): void {
-  for (const [, res] of sseClients) {
-    res.write(encodeSseEvent(createBackgroundCompleteEvent(text)));
+  const data = encodeSseEvent(createBackgroundCompleteEvent(text));
+  for (const [connectionId, res] of sseClients) {
+    safeSseWrite(connectionId, res, data);
   }
 }
 
 /** Broadcast a session-cleared event to all connected SSE clients. */
 export function broadcastClearedEvent(): void {
-  for (const [, res] of sseClients) {
-    res.write(encodeSseEvent(createClearedEvent()));
+  const data = encodeSseEvent(createClearedEvent());
+  for (const [connectionId, res] of sseClients) {
+    safeSseWrite(connectionId, res, data);
   }
 }
 
@@ -1344,8 +1368,9 @@ export function broadcastCronEvent(
   const event = isJobEvent
     ? createCronJobEvent(eventName as "cron.job.created" | "cron.job.updated" | "cron.job.deleted", data)
     : createCronExecutionEvent(eventName as "cron.execution.started" | "cron.execution.complete", data);
-  for (const [, res] of sseClients) {
-    res.write(encodeSseEvent(event as any));
+  const encoded = encodeSseEvent(event as any);
+  for (const [connectionId, res] of sseClients) {
+    safeSseWrite(connectionId, res, encoded);
   }
 }
 
@@ -1356,11 +1381,11 @@ export function broadcastTranscriptEntry(
   source: string,
   excludeConnectionId?: string,
 ): void {
-  const event = createTranscriptEvent(role, content, source);
+  const event = encodeSseEvent(createTranscriptEvent(role, content, source));
   for (const [connectionId, res] of sseClients) {
     if (excludeConnectionId && connectionId === excludeConnectionId) {
       continue;
     }
-    res.write(encodeSseEvent(event));
+    safeSseWrite(connectionId, res, event);
   }
 }

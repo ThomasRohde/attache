@@ -1,6 +1,7 @@
 import { config as loadEnv } from "dotenv";
 import { z } from "zod";
-import { readFileSync, statSync, writeFileSync } from "fs";
+import { readFileSync, statSync, writeFileSync, renameSync } from "fs";
+import { join, dirname } from "path";
 import { ATTACHE_ENV_PATH, ENV_PATH, ensureAttacheHome } from "./paths.js";
 
 // Only Attache's own env file is trusted by default.
@@ -166,7 +167,11 @@ function writeEnvFileLines(lines: string[]): void {
     normalized.pop();
   }
   const suffix = normalized.length > 0 ? "\n" : "";
-  writeFileSync(ENV_PATH, `${normalized.join("\n")}${suffix}`);
+  const content = `${normalized.join("\n")}${suffix}`;
+  // Atomic write: write to temp file then rename to prevent corruption
+  const tmpPath = join(dirname(ENV_PATH), `.env.tmp.${process.pid}`);
+  writeFileSync(tmpPath, content);
+  renameSync(tmpPath, ENV_PATH);
 }
 
 /** Update or append an env var in the active Attache .env file. */
@@ -365,7 +370,7 @@ export function prepareConfigUpdate(key: ConfigUpdateKey, value: string): Prepar
           apply: () => {},
         };
       }
-      const workfolder = normalizeNonEmptyString(value, key);
+      const workfolder = validateWorkfolderPath(value);
       return {
         key,
         persistedValue: workfolder,
