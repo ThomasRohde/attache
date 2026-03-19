@@ -410,6 +410,51 @@ html, body {
     line-height: 1.6;
 }
 
+/* ── Tool Trace Collapsible Boxes ────────────────────────── */
+.entry-content details.tool-trace {
+    margin: 8px 0;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    font-size: 13px;
+}
+
+.entry-content details.tool-trace summary {
+    padding: 6px 12px;
+    background: var(--surface-raised, rgba(255,255,255,0.04));
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--text-secondary);
+    user-select: none;
+    list-style: none;
+}
+
+.entry-content details.tool-trace summary::before {
+    content: '▶ ';
+    font-size: 10px;
+    transition: transform var(--duration) var(--ease-out);
+    display: inline-block;
+}
+
+.entry-content details.tool-trace[open] summary::before {
+    content: '▼ ';
+}
+
+.entry-content details.tool-trace > :not(summary) {
+    padding: 8px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-secondary);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.entry-content details.tool-trace pre,
+.entry-content details.tool-trace code {
+    font-size: 11px;
+}
+
 .streaming-cursor::after {
     content: '';
     display: inline-block;

@@ -12,12 +12,16 @@ public class MarkdownService
     {
         _pipeline = new MarkdownPipelineBuilder()
             .UseAdvancedExtensions()
-            .DisableHtml()
+            .UseGenericAttributes()
             .Build();
 
         _sanitizer = new HtmlSanitizer();
         _sanitizer.AllowedAttributes.Add("class");
+        _sanitizer.AllowedAttributes.Add("open");
         _sanitizer.AllowedSchemes.Add("mailto");
+        // Allow collapsible elements for tool call traces
+        _sanitizer.AllowedTags.Add("details");
+        _sanitizer.AllowedTags.Add("summary");
     }
 
     public string ToHtml(string markdown)

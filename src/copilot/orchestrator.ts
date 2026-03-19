@@ -194,6 +194,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function escapeHtml(text: string): string {
+  return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Ensure the backend client is connected, resetting if necessary. Coalesces concurrent resets. */
 let resetPromise: Promise<BackendClient> | undefined;
 async function ensureClient(): Promise<BackendClient> {
@@ -428,6 +432,12 @@ async function executeOnSession(prompt: string, callback: MessageCallback, attac
     const { toolCallId, toolName } = data;
     if (!internalToolNames.has(toolName)) {
       pendingToolCalls.set(toolCallId, toolName);
+      // Show a "running" indicator immediately
+      if (accumulated.length > 0 && !accumulated.endsWith("\n")) {
+        accumulated += "\n";
+      }
+      accumulated += `\n<details open class="tool-trace"><summary>${escapeHtml(toolName)} ⏳</summary>\n\nRunning…\n\n</details>\n`;
+      callback(accumulated, false);
     }
   });
   const unsubToolDone = session.on("tool.execution_complete", (data) => {
@@ -435,11 +445,19 @@ async function executeOnSession(prompt: string, callback: MessageCallback, attac
     const toolName = pendingToolCalls.get(data.toolCallId);
     if (toolName && data.result?.content) {
       pendingToolCalls.delete(data.toolCallId);
-      // Inject external tool output into the stream so the user sees it
-      if (accumulated.length > 0 && !accumulated.endsWith("\n")) {
-        accumulated += "\n";
+      // Replace the "running" indicator with the result in a collapsed box.
+      // Remove the open placeholder for this tool and add the completed version.
+      const runningPattern = `<details open class="tool-trace"><summary>${escapeHtml(toolName)} ⏳</summary>\n\nRunning…\n\n</details>`;
+      const completedBlock = `<details class="tool-trace"><summary>${escapeHtml(toolName)} ✓</summary>\n\n${data.result.content}\n\n</details>`;
+      if (accumulated.includes(runningPattern)) {
+        accumulated = accumulated.replace(runningPattern, completedBlock);
+      } else {
+        // Fallback: just append
+        if (accumulated.length > 0 && !accumulated.endsWith("\n")) {
+          accumulated += "\n";
+        }
+        accumulated += `\n${completedBlock}\n`;
       }
-      accumulated += `\n**[${toolName}]**\n${data.result.content}\n`;
       callback(accumulated, false);
     }
   });
