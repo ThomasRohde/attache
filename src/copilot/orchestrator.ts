@@ -198,6 +198,25 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+/** Convert internal tool names to readable labels.
+ *  e.g. "mcp__attache__list_skills" → "List Skills"
+ *       "create_worker_session" → "Create Worker Session"
+ *       "Read" → "Read" */
+function formatToolLabel(toolName: string): string {
+  // Strip MCP prefix: "mcp__server__tool_name" → "tool_name"
+  let name = toolName;
+  const mcpMatch = name.match(/^mcp__[^_]+__(.+)$/);
+  if (mcpMatch) name = mcpMatch[1];
+  // Also handle "mcp:server/tool" format
+  const mcpColonMatch = name.match(/^mcp:[^/]+\/(.+)$/);
+  if (mcpColonMatch) name = mcpColonMatch[1];
+  // Convert snake_case to Title Case
+  return name
+    .split("_")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
 /** Ensure the backend client is connected, resetting if necessary. Coalesces concurrent resets. */
 let resetPromise: Promise<BackendClient> | undefined;
 async function ensureClient(): Promise<BackendClient> {
@@ -432,27 +451,27 @@ async function executeOnSession(prompt: string, callback: MessageCallback, attac
     const { toolCallId, toolName } = data;
     if (!internalToolNames.has(toolName)) {
       pendingToolCalls.set(toolCallId, toolName);
-      // Show a "running" indicator immediately
+      const label = formatToolLabel(toolName);
       if (accumulated.length > 0 && !accumulated.endsWith("\n")) {
         accumulated += "\n";
       }
-      accumulated += `\n<details open class="tool-trace"><summary>${escapeHtml(toolName)} ⏳</summary>\n\nRunning…\n\n</details>\n`;
+      accumulated += `\n<details open class="tool-trace"><summary class="tool-running">${escapeHtml(label)}</summary><div class="tool-output">Running\u2026</div></details>\n`;
       callback(accumulated, false);
     }
   });
   const unsubToolDone = session.on("tool.execution_complete", (data) => {
     toolCallExecuted = true;
     const toolName = pendingToolCalls.get(data.toolCallId);
-    if (toolName && data.result?.content) {
+    if (toolName) {
       pendingToolCalls.delete(data.toolCallId);
-      // Replace the "running" indicator with the result in a collapsed box.
-      // Remove the open placeholder for this tool and add the completed version.
-      const runningPattern = `<details open class="tool-trace"><summary>${escapeHtml(toolName)} ⏳</summary>\n\nRunning…\n\n</details>`;
-      const completedBlock = `<details class="tool-trace"><summary>${escapeHtml(toolName)} ✓</summary>\n\n${data.result.content}\n\n</details>`;
+      const label = formatToolLabel(toolName);
+      const content = data.result?.content || "(no output)";
+      // Replace the "running" indicator with the completed result
+      const runningPattern = `<details open class="tool-trace"><summary class="tool-running">${escapeHtml(label)}</summary><div class="tool-output">Running\u2026</div></details>`;
+      const completedBlock = `<details class="tool-trace"><summary class="tool-done">${escapeHtml(label)}</summary><div class="tool-output"><pre>${escapeHtml(content)}</pre></div></details>`;
       if (accumulated.includes(runningPattern)) {
         accumulated = accumulated.replace(runningPattern, completedBlock);
       } else {
-        // Fallback: just append
         if (accumulated.length > 0 && !accumulated.endsWith("\n")) {
           accumulated += "\n";
         }
@@ -474,7 +493,9 @@ async function executeOnSession(prompt: string, callback: MessageCallback, attac
 
   try {
     const result = await session.sendAndWait(prompt, 300_000, attachments);
-    const finalContent = result.content || accumulated || "(No response)";
+    // Prefer accumulated content (includes tool traces as collapsible boxes)
+    // over result.content (SDK's plain-text response without traces).
+    const finalContent = accumulated || result.content || "(No response)";
     return finalContent;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

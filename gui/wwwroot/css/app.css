@@ -412,47 +412,83 @@ html, body {
 
 /* ── Tool Trace Collapsible Boxes ────────────────────────── */
 .entry-content details.tool-trace {
-    margin: 8px 0;
+    margin: 6px 0;
     border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
-    font-size: 13px;
 }
 
 .entry-content details.tool-trace summary {
-    padding: 6px 12px;
+    padding: 7px 12px;
     background: var(--surface-raised, rgba(255,255,255,0.04));
     cursor: pointer;
     font-weight: 600;
     font-size: 12px;
+    font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', monospace);
     color: var(--text-secondary);
     user-select: none;
     list-style: none;
 }
 
+.entry-content details.tool-trace summary::marker,
+.entry-content details.tool-trace summary::-webkit-details-marker {
+    display: none;
+}
+
 .entry-content details.tool-trace summary::before {
     content: '▶ ';
-    font-size: 10px;
-    transition: transform var(--duration) var(--ease-out);
-    display: inline-block;
+    font-size: 9px;
+    margin-right: 4px;
+    opacity: 0.6;
 }
 
 .entry-content details.tool-trace[open] summary::before {
     content: '▼ ';
 }
 
-.entry-content details.tool-trace > :not(summary) {
+/* Running state — pulsing accent color */
+.entry-content details.tool-trace summary.tool-running {
+    color: var(--accent);
+}
+
+.entry-content details.tool-trace summary.tool-running::after {
+    content: ' ⋯';
+    animation: tool-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes tool-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Done state — muted with checkmark */
+.entry-content details.tool-trace summary.tool-done::after {
+    content: ' ✓';
+    color: var(--success, #6b9);
+    font-weight: normal;
+}
+
+/* Tool output container */
+.entry-content .tool-output {
     padding: 8px 12px;
     font-size: 12px;
     line-height: 1.5;
     color: var(--text-secondary);
-    max-height: 200px;
+    max-height: 240px;
     overflow-y: auto;
+    border-top: 1px solid var(--border);
 }
 
-.entry-content details.tool-trace pre,
-.entry-content details.tool-trace code {
+.entry-content .tool-output pre {
+    margin: 0;
+    padding: 0;
+    background: none;
+    border: none;
     font-size: 11px;
+    font-family: var(--font-mono, 'Cascadia Code', 'Fira Code', monospace);
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--text-secondary);
 }
 
 .streaming-cursor::after {
