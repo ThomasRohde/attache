@@ -566,10 +566,11 @@ export async function sendToOrchestrator(
     source.originChannel ?? "tui"; // background → origin channel (default tui)
   logMessage("in", sourceLabel, prompt);
 
-  // Tag the prompt with its source channel
+  // Tag the prompt with its source channel and current local time
+  const nowTag = new Date().toLocaleTimeString('da-DK', { timeZone: 'Europe/Copenhagen', hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
   const taggedPrompt = source.type === "background"
     ? prompt
-    : `[via ${sourceLabel}] ${prompt}`;
+    : `[via ${sourceLabel} | ${nowTag}] ${prompt}`;
 
   // Log role: background events are "system", user messages are "user"
   const logRole = source.type === "background" ? "system" : "user";

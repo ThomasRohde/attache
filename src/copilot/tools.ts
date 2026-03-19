@@ -36,6 +36,7 @@ export const TOOL_REGISTRY: { name: string; description: string; category: strin
   { name: "recall", description: "Search long-term memory for stored information", category: "memory" },
   { name: "forget", description: "Remove a specific memory from long-term storage", category: "memory" },
   { name: "restart_attache", description: "Restart the Attache daemon process", category: "system" },
+  { name: "get_current_time", description: "Get the current date and time in Europe/Copenhagen timezone", category: "system" },
   { name: "schedule_task", description: "Create a recurring scheduled task", category: "cron" },
   { name: "list_schedules", description: "List all scheduled tasks with status", category: "cron" },
   { name: "update_schedule", description: "Modify an existing scheduled task", category: "cron" },
@@ -735,6 +736,27 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           });
         }, 1000);
         return `Restarting Attache${reason}. I'll be back in a few seconds.`;
+      },
+    }),
+
+    defineTool("get_current_time", {
+      description:
+        "Get the current date and time in Europe/Copenhagen timezone. " +
+        "Use when the user asks what time or date it is, or when you need to know the current time.",
+      parameters: z.object({}),
+      handler: async () => {
+        const now = new Date();
+        const formatted = now.toLocaleString('en-GB', {
+          timeZone: 'Europe/Copenhagen',
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          timeZoneName: 'short',
+        });
+        return `Current time: ${formatted}`;
       },
     }),
   ];
