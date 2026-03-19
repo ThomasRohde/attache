@@ -8,12 +8,13 @@ Attache is a local AI orchestrator that runs a persistent daemon on your machine
 
 - Persistent orchestrator daemon with ongoing context
 - Pluggable backends: Copilot SDK (default), Claude Agent SDK, OpenAI Codex
+- Unified customization architecture: skills, instructions, MCP servers, and profiles resolved per-backend
 - Blazor Hybrid desktop GUI with streaming markdown, 4-pane layout, and system tray
 - Unified conversation transcript across all channels (GUI + Telegram)
 - File and image attachments across all channels (GUI, Telegram, API)
 - Optional Telegram control from your phone (including photo messages)
 - Configurable workfolder for project-scoped sessions
-- Worker session management for repo-specific coding tasks
+- Worker session management with customization bundles
 - Cron-based task scheduling for recurring jobs
 - Local HTTP API with SSE for real-time streaming
 - SQLite-backed state, memory, and session persistence
@@ -90,6 +91,7 @@ Stored in `~/.attache/.env`. Most settings are configurable through the GUI Sett
 | `ATTACHE_SELF_EDIT` | Allow self-modification (`1` to enable) | disabled | Yes |
 | `ATTACHE_WORKFOLDER` | Default working directory for workers | -- | Restart |
 | `ATTACHE_BACKEND` | Backend provider (`copilot`, `claude`, `codex`) | `copilot` | Restart |
+| `ATTACHE_PROFILE` | Active customization profile name | -- | Restart |
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token | -- | Restart |
 | `AUTHORIZED_USER_ID` | Numeric Telegram user ID | -- | Restart |
 | `API_PORT` | Daemon API port | `7777` | Restart |
@@ -104,6 +106,166 @@ attache start [--self-edit]   # Start the daemon
 attache update                # Install the latest published update
 attache help                  # Show CLI help
 ```
+
+## Architecture
+
+```
+Telegram / GUI / HTTP API
+        |
+        v
+  Express API Server (localhost:7777, bearer token auth)
+        |
+        v
+  Daemon Process (src/daemon.ts)
+        |
+        v
+  Orchestrator (src/copilot/orchestrator.ts)
+  - Single persistent session (resumable across daemon restarts)
+  - Serial message queue (prevents concurrent session access)
+  - Feeds worker results back as new messages
+        |
+        v
+  Customization Pipeline (src/customization/)
+  - DefaultResolver: scans scopes, deduplicates, applies profiles
+  - Backend Projectors: translate bundles into native SDK config
+  - Skill Sync: copies skills to backend-specific directories
+        |
+        v
+  Backend Abstraction (src/backend/)
+  - Pluggable: copilot (default), claude, codex
+  - BackendClient / BackendSession interfaces
+  - Each provider in src/backend/providers/{copilot,claude,codex}/
+        |
+        v
+  Workers (src/copilot/tools.ts)
+  - Short-lived sessions, created on-demand
+  - Max 5 concurrent, 600s timeout (configurable)
+  - Non-blocking dispatch: orchestrator returns immediately
+  - Receive customization bundles (skills, MCP, instructions) via resolver+projector
+```
+
+### Unified Customization System
+
+Attache uses a unified control plane for customizations across all three backends. The system manages four distinct artifact types:
+
+| Artifact | Purpose | Example |
+| --- | --- | --- |
+| **Instructions** | Stable policy, coding conventions | CLAUDE.md, AGENTS.md, copilot-instructions.md |
+| **Skills** | Reusable workflow playbooks | SKILL.md directories with frontmatter |
+| **MCP bindings** | Tool/resource server connections | stdio, HTTP, SSE server configs |
+| **Profiles** | Named bundles selecting subsets of the above | orchestrator vs worker, work vs personal |
+
+#### Resolution Pipeline
+
+When creating a session (orchestrator or worker), Attache resolves customizations through a two-stage pipeline:
+
+```
+1. Resolve                           2. Project
+   DefaultResolver                      BackendProjector
+   - Scan scopes (precedence order)     - CopilotProjector  -> skillDirectories, tools, systemMessage
+   - Deduplicate skills                 - ClaudeProjector   -> settingSources, createSdkMcpServer, preset+append
+   - Merge MCP configs                  - CodexProjector    -> baseInstructions, dynamicTools, skill sync
+   - Apply profile filtering
+   -> EffectiveBundle                   -> SessionConfig (backend-native format)
+```
+
+#### Scope Precedence
+
+Customizations are resolved in precedence order (lowest to highest):
+
+```
+bundled < global (~/.agents/) < user (~/.attache/) < repo (.attache/) < path
+```
+
+| Scope | Skills | MCP | Instructions | Profiles |
+| --- | --- | --- | --- | --- |
+| **Bundled** | `skills/` (shipped) | -- | Built-in system message | -- |
+| **Global** | `~/.agents/skills/` | -- | -- | -- |
+| **User** | `~/.attache/skills/` | `~/.copilot/mcp-config.json` | -- | `~/.attache/profiles/` |
+| **Repo** | `<repo>/.attache/skills/` | `<repo>/.attache/mcp.json` | `<repo>/.attache/instructions/` | `<repo>/.attache/profiles/` |
+| **Path** | -- | -- | `*.instructions.md` with `applyTo` glob | -- |
+
+Higher-scoped items override lower-scoped items with the same identifier.
+
+#### Backend-Native Projection
+
+Each backend receives customizations in its native format — not a lowest-common-denominator injection:
+
+| Feature | Copilot SDK | Claude Agent SDK | Codex CLI |
+| --- | --- | --- | --- |
+| **Skills** | Native `skillDirectories[]` | `settingSources: ['user','project']` + sync to `~/.claude/skills/` | Native scanning + sync to `~/.agents/skills/` |
+| **Custom tools** | Native `tools[]` with handlers | In-process MCP via `createSdkMcpServer()` | `dynamicTools[]` via app-server RPC |
+| **MCP servers** | `mcpServers` in SessionConfig | `mcpServers` config + in-process SDK servers | `config.toml` + RPC management |
+| **System prompt** | `mode: 'append'` or `'replace'` | `{ preset: 'claude_code', append }` | `baseInstructions` + `developerInstructions` |
+| **Vision** | Native | Native (Read tool) | `localImage`/`image` input types |
+
+#### Profiles
+
+Profiles are YAML files in `~/.attache/profiles/` or `<repo>/.attache/profiles/` that filter which skills, MCP servers, and instructions are active:
+
+```yaml
+name: work
+description: Work environment with restricted skills
+skills:
+  include: ["gog", "find-skills", "cwmem"]
+mcp:
+  exclude: ["personal-server"]
+instructions:
+  include_tags: ["coding", "work"]
+```
+
+Set the active profile via `ATTACHE_PROFILE` in `~/.attache/.env`, or pass a `profile` parameter when creating worker sessions.
+
+#### Repo-Scoped Customization
+
+Any git repository can include an `.attache/` directory with project-specific customizations:
+
+```
+myproject/
+  .attache/
+    skills/           # Repo-scoped skills (SKILL.md directories)
+    instructions/     # Path-scoped instructions
+      typescript.instructions.md   # applyTo: "**/*.ts"
+    mcp.json          # Repo-scoped MCP server configs
+    profiles/         # Repo-scoped profiles
+```
+
+Path-scoped instructions use `applyTo` frontmatter with glob patterns:
+
+```markdown
+---
+applyTo: "**/*.ts"
+---
+Use strict TypeScript. Always use explicit return types.
+```
+
+### Key Subsystems
+
+- **Backend abstraction** (`src/backend/`): `BackendClient` and `BackendSession` interfaces with capability flags. Three providers: Copilot (full features), Claude (via Anthropic API), Codex (via OpenAI).
+- **Customization** (`src/customization/`): `DefaultResolver` scans scopes and produces `EffectiveBundle`. Backend projectors translate bundles into native `SessionConfig`. Skill sync copies skills to backend-specific directories with manifest tracking.
+- **Skills** (`src/copilot/skills.ts`): SKILL.md format with YAML frontmatter. Three+ directories: bundled, local, global, repo. Usage tracked in SQLite.
+- **Cron scheduler** (`src/cron/scheduler.ts`): node-cron based task scheduling with SQLite persistence and SSE broadcast.
+- **Database** (`src/store/db.ts`): better-sqlite3 with WAL mode. Tables: `worker_sessions`, `attache_state`, `conversation_log`, `memories`, `skill_usage`, `cron_jobs`, `cron_executions`.
+- **API** (`src/api/server.ts`): SSE streaming, message submission, transcript. Bearer token auth.
+- **GUI** (`gui/`): Blazor Hybrid WinForms app. 4-pane layout, SSE streaming, system tray.
+- **Telegram** (`src/telegram/bot.ts`): grammy framework. Auth via `AUTHORIZED_USER_ID`.
+- **System message** (`src/copilot/system-message.ts`): Full system message (`getOrchestratorSystemMessage`) and append-only instructions (`getAttacheAppendInstructions`) for backends with native identity.
+
+### Message Flow
+
+1. Input arrives from Telegram, GUI, or HTTP API with a `source` tag
+2. `sendToOrchestrator()` queues the message (serial processing)
+3. Orchestrator session processes with 24 registered tools
+4. Tool calls like `create_worker_session` dispatch non-blocking workers
+5. Response streams as SSE delta events + Telegram chunks
+6. Worker completion -> `feedBackgroundResult()` -> re-queued as orchestrator message
+
+### Session Persistence
+
+- Orchestrator session ID saved to SQLite, resumed on daemon restart
+- On resume failure, falls back to new session with last 10 messages injected for context recovery
+- Backend change clears saved session (sessions are not portable across backends)
+- Health check (30s interval) auto-reconnects if backend disconnects
 
 ## Daemon API
 
@@ -190,7 +352,7 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | --- | --- | --- |
 | `POST` | `/send-photo` | Send a photo via Telegram |
 
-### Key paths
+### Key Paths
 
 | Purpose | Path |
 | --- | --- |
@@ -200,25 +362,10 @@ Listens on `http://127.0.0.1:7777` (configurable via `API_PORT`).
 | Session state | `~/.attache/sessions/` |
 | File uploads | `~/.attache/uploads/` |
 | User skills | `~/.attache/skills/` |
-
-## Architecture
-
-```
-Telegram ───> Attache Daemon <─── Desktop GUI
-                    │
-             Orchestrator Session
-                    │
-        +-----------+-----------+
-        |           |           |
-      Worker 1    Worker 2    Worker N
-```
-
-- **Daemon** (`src/daemon.ts`): backend client, Express API, optional Telegram bot
-- **Orchestrator** (`src/copilot/orchestrator.ts`): long-lived session, serial message queue, session invalidation on backend reset
-- **Workers** (`src/copilot/tools.ts`): background sessions in project directories (max 5, configurable timeout), live output streaming
-- **Backend** (`src/backend/`): pluggable providers — Copilot SDK, Claude Agent SDK, OpenAI Codex
-- **Cron** (`src/cron/scheduler.ts`): recurring task scheduling via node-cron
-- **GUI** (`gui/`): Blazor Hybrid WinForms app with streaming SSE, Markdig markdown, system tray
+| User profiles | `~/.attache/profiles/` |
+| Global shared skills | `~/.agents/skills/` |
+| MCP server configs | `~/.copilot/mcp-config.json` |
+| GUI window bounds | `~/.attache/window.json` |
 
 ## Development
 
@@ -254,7 +401,7 @@ npm run reload:all
 dotnet run --project gui/AttacheGui.csproj
 ```
 
-### Project structure
+### Project Structure
 
 ```
 src/
@@ -267,12 +414,35 @@ src/
   copilot/
     orchestrator.ts   Single persistent session with serial message queue
     tools.ts          24 tools (workers, skills, memory, models, cron, system)
-    skills.ts         Skill discovery and management
-    system-message.ts Orchestrator prompt construction
+    skills.ts         Skill discovery and management (bundled/local/global)
+    system-message.ts Orchestrator prompt construction (full + append-only)
+    mcp-config.ts     MCP server configuration loading
+  customization/
+    types.ts          Core types (Instruction, ResolvedSkill, Profile, EffectiveBundle, etc.)
+    resolver.ts       DefaultResolver: scope scanning, dedup, profile filtering
+    profiles.ts       Profile YAML loading from user + repo scopes
+    skill-sync.ts     Manifest-tracked skill copying to backend directories
+    projectors/
+      index.ts        ProjectorFactory
+      copilot.ts      CopilotProjector (skillDirectories, systemMessage)
+      claude.ts       ClaudeProjector (settingSources, skill sync, preset+append)
+      codex.ts        CodexProjector (baseInstructions, dynamicTools, skill sync)
   backend/
-    types.ts          BackendClient / BackendSession interfaces
+    types.ts          BackendClient / BackendSession interfaces, SessionConfig
     registry.ts       Singleton backend registry
-    providers/        copilot, claude, codex implementations
+    providers/
+      copilot/
+        index.ts      CopilotBackendClient (full SDK features)
+        session.ts    Session wrapper
+        tool-bridge.ts Re-exports from Copilot SDK
+      claude/
+        index.ts      ClaudeBackendClient (settingSources, preset+append, MCP tools)
+        session.ts    Query-based session wrapper
+        tool-bridge.ts Bridges Copilot tools to createSdkMcpServer()
+      codex/
+        index.ts      CodexBackendClient (app-server, dynamicTools, experimentalApi)
+        session.ts    Thread-based session wrapper
+        tool-bridge.ts Bridges Copilot tools to Codex dynamicTools
   cron/
     scheduler.ts      node-cron task scheduling
   store/

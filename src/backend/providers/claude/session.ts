@@ -11,7 +11,7 @@ import { LOG_PREFIX } from "../../../identity.js";
 
 export interface ClaudeQueryOptions {
   model: string;
-  systemPrompt?: string;
+  systemPrompt?: string | { type: 'preset'; preset: 'claude_code'; append?: string };
   cwd?: string;
   allowedTools: string[];
   permissionMode: string;
@@ -21,6 +21,7 @@ export interface ClaudeQueryOptions {
   includePartialMessages: boolean;
   env?: Record<string, string | undefined>;
   stderr?: (data: string) => void;
+  settingSources?: string[];
   /** Called when the SDK reports available models (opportunistic cache update). */
   onModelsDiscovered?: (models: { value: string; displayName: string }[]) => void;
 }

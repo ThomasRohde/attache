@@ -7,7 +7,7 @@ if (process.platform === "win32" && !("type" in process)) {
 
 import { initBackendClient, stopBackendClient } from "./backend/registry.js";
 import { initOrchestrator, setMessageLogger, setProactiveNotify, getWorkers } from "./copilot/orchestrator.js";
-import { startApiServer, broadcastToSSE } from "./api/server.js";
+import { startApiServer, broadcastToSSE, broadcastTranscriptEntry } from "./api/server.js";
 import { createBot, startBot, stopBot, sendProactiveMessage } from "./telegram/bot.js";
 import { getDb, closeDb } from "./store/db.js";
 import { config } from "./config.js";
@@ -100,7 +100,9 @@ async function main(): Promise<void> {
       if (config.telegramEnabled) sendProactiveMessage(text);
     }
     if (!channel || channel === "tui") {
-      broadcastToSSE(text);
+      // Send as a transcript entry so it appears inline in the GUI conversation,
+      // not as a separate "background" event that splits into a BG tab.
+      broadcastTranscriptEntry("assistant", text, "tui");
     }
   });
 

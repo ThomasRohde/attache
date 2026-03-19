@@ -7,6 +7,7 @@ import type {
   SessionConfig,
 } from "../../types.js";
 import { CodexBackendSession } from "./session.js";
+import { bridgeToolsForCodex } from "./tool-bridge.js";
 import { CODEX_MODELS } from "./models.js";
 import { LOG_PREFIX } from "../../../identity.js";
 import { ATTACHE_ENV_PATH } from "../../../paths.js";
@@ -52,15 +53,15 @@ export type NotificationHandler = (method: string, params: any) => void;
 export class CodexBackendClient implements BackendClient {
   readonly name = "codex";
   readonly capabilities: BackendCapabilities = {
-    customTools: false,
+    customTools: true,
     sessionResume: true,
     infiniteSessions: false,
     persistentClient: true,
     modelListing: true,
-    skillDirectories: false,
+    skillDirectories: true,
     structuredOutput: false,
     machineSessionDiscovery: false,
-    vision: false,
+    vision: true,
   };
 
   private state: ConnectionState = "disconnected";
@@ -71,6 +72,7 @@ export class CodexBackendClient implements BackendClient {
   private pendingRpc = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
   private notificationHandlers = new Map<string, NotificationHandler>();
   private cachedModels: ModelInfo[] | undefined;
+  private dynamicToolHandlers = new Map<string, (toolName: string, args: any) => Promise<{ success: boolean; contentItems: Array<{ type: string; text?: string }> }>>();
 
   async start(): Promise<void> {
     this.state = "connecting";
@@ -125,7 +127,7 @@ export class CodexBackendClient implements BackendClient {
     // Send initialize handshake
     await this.sendRpc("initialize", {
       clientInfo: { name: "attache", title: "Attache Daemon", version: "1.0.0" },
-      capabilities: { experimentalApi: false },
+      capabilities: { experimentalApi: true },
     });
 
     this.state = "connected";
@@ -135,6 +137,7 @@ export class CodexBackendClient implements BackendClient {
   async stop(): Promise<void> {
     this.state = "disconnected";
     this.notificationHandlers.clear();
+    this.dynamicToolHandlers.clear();
     for (const { reject } of this.pendingRpc.values()) {
       reject(new Error("Client stopped"));
     }
@@ -178,12 +181,32 @@ export class CodexBackendClient implements BackendClient {
 
   async createSession(config: SessionConfig): Promise<BackendSession> {
     if (this.state !== "connected") throw new Error("Codex client not connected");
-    return new CodexBackendSession(this, config);
+    const { sessionConfig, handler } = this.bridgeTools(config);
+    return new CodexBackendSession(this, sessionConfig, undefined, handler);
   }
 
   async resumeSession(threadId: string, config: SessionConfig): Promise<BackendSession> {
     if (this.state !== "connected") throw new Error("Codex client not connected");
-    return new CodexBackendSession(this, config, threadId);
+    const { sessionConfig, handler } = this.bridgeTools(config);
+    return new CodexBackendSession(this, sessionConfig, threadId, handler);
+  }
+
+  /** Convert Copilot SDK tools to Codex dynamicTools and create a handler. */
+  private bridgeTools(config: SessionConfig): {
+    sessionConfig: SessionConfig;
+    handler?: (toolName: string, args: any) => Promise<{ success: boolean; contentItems: Array<{ type: string; text?: string }> }>;
+  } {
+    if (!config.tools?.length) return { sessionConfig: config };
+
+    const { specs, handler } = bridgeToolsForCodex(config.tools as import("../copilot/tool-bridge.js").Tool<any>[]);
+    return {
+      sessionConfig: {
+        ...config,
+        tools: undefined,     // Don't pass Copilot-format tools to Codex
+        dynamicTools: specs,  // Pass converted dynamic tools instead
+      },
+      handler,
+    };
   }
 
   async reset(): Promise<void> {
@@ -216,6 +239,16 @@ export class CodexBackendClient implements BackendClient {
   /** Unregister a thread's notification handler. */
   unregisterThread(threadId: string): void {
     this.notificationHandlers.delete(threadId);
+  }
+
+  /** Register a dynamic tool call handler for a specific thread. */
+  registerDynamicToolHandler(threadId: string, handler: (toolName: string, args: any) => Promise<{ success: boolean; contentItems: Array<{ type: string; text?: string }> }>): void {
+    this.dynamicToolHandlers.set(threadId, handler);
+  }
+
+  /** Unregister a dynamic tool handler. */
+  unregisterDynamicToolHandler(threadId: string): void {
+    this.dynamicToolHandlers.delete(threadId);
   }
 
   // -- Internal --
@@ -319,6 +352,23 @@ export class CodexBackendClient implements BackendClient {
     } else if (method.includes("requestUserInput")) {
       // Can't handle interactive input — decline
       this.sendResponse(msg.id, { answers: [] });
+    } else if (method === "dynamicToolCall") {
+      const params = msg.params as any;
+      const threadId = params?.threadId;
+      const handler = threadId ? this.dynamicToolHandlers.get(threadId) : undefined;
+      if (handler) {
+        handler(params.toolName, params.arguments || {})
+          .then((result) => this.sendResponse(msg.id, result))
+          .catch((err) => this.sendResponse(msg.id, {
+            success: false,
+            contentItems: [{ type: "inputText", text: `Error: ${err instanceof Error ? err.message : String(err)}` }],
+          }));
+      } else {
+        this.sendResponse(msg.id, {
+          success: false,
+          contentItems: [{ type: "inputText", text: `No handler registered for dynamic tool call` }],
+        });
+      }
     } else {
       // Unknown server request — respond with empty result
       this.sendResponse(msg.id, {});

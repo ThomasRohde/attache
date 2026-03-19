@@ -139,9 +139,8 @@
 
     private static readonly Dictionary<string, string> ChannelLabels = new()
     {
-        ["tui"] = "GUI",
+        ["tui"] = "Chat",
         ["telegram"] = "TELE",
-        ["background"] = "BG",
         ["cron"] = "CRON",
     };
 
@@ -152,9 +151,8 @@
     {
         "tui" => 0,
         "telegram" => 1,
-        "background" => 2,
-        "cron" => 3,
-        _ => 4,
+        "cron" => 2,
+        _ => 3,
     };
 
     private string WorkerStatusMessage

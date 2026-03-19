@@ -60,7 +60,6 @@
 
         // Always register cron as a known channel
         State.KnownChannels.Add("cron");
-        State.KnownChannels.Add("background");
 
         // Load conversation history from database
         await LoadTranscriptHistoryAsync();
@@ -93,7 +92,9 @@
                 if (row.Role == "system") continue; // skip system/background entries
 
                 DateTime.TryParse(row.Ts, out var ts);
-                var source = string.IsNullOrEmpty(row.Source) ? "tui" : row.Source;
+                // Merge legacy "background" entries into the GUI tab
+                var rawSource = string.IsNullOrEmpty(row.Source) ? "tui" : row.Source;
+                var source = rawSource == "background" ? "tui" : rawSource;
                 State.TranscriptEntries.Add(new TranscriptEntry
                 {
                     Role = row.Role,
@@ -189,10 +190,11 @@
 
     private void OnBackgroundComplete(string content)
     {
-        // Background completions are shown as transcript entries without
-        // finalizing the current foreground streaming response.
-        State.AddTranscriptEntry("assistant", content, "background");
-        State.RecordChannelActivity("background");
+        // Background completions merge into the GUI conversation inline,
+        // not into a separate tab. The response is from the orchestrator
+        // summarizing a worker's results — it belongs in the main transcript.
+        State.AddTranscriptEntry("assistant", content, "tui");
+        State.RecordChannelActivity("tui");
         InvokeAsync(StateHasChanged);
     }
 

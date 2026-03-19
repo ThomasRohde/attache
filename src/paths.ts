@@ -13,6 +13,7 @@ export const ATTACHE_ENV_PATH = join(ATTACHE_HOME, ".env");
 export const ATTACHE_SKILLS_DIR = join(ATTACHE_HOME, "skills");
 export const ATTACHE_SESSIONS_DIR = join(ATTACHE_HOME, "sessions");
 export const ATTACHE_UPLOADS_DIR = join(ATTACHE_HOME, "uploads");
+export const ATTACHE_PROFILES_DIR = join(ATTACHE_HOME, "profiles");
 export const ATTACHE_API_TOKEN_PATH = join(ATTACHE_HOME, "api-token");
 
 /** Return the active Attache home directory. */

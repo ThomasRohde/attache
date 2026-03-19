@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { defineTool } from "../backend/providers/copilot/tool-bridge.js";
 import type { Tool } from "../backend/providers/copilot/tool-bridge.js";
-import type { BackendClient, BackendSession } from "../backend/types.js";
+import type { BackendClient, BackendSession, SessionConfig } from "../backend/types.js";
 import { getDb, addMemory, searchMemories, removeMemory, logSkillUsage, getSkillStats } from "../store/db.js";
 import { readdirSync, readFileSync, statSync } from "fs";
 import { join, sep, resolve } from "path";
@@ -12,6 +12,9 @@ import { SESSIONS_DIR } from "../paths.js";
 import { getCurrentSourceChannel } from "./orchestrator.js";
 import { createCronJob as dbCreateCronJob, getCronJobs, updateCronJob, deleteCronJob } from "../store/db.js";
 import { validateCronExpression, rescheduleJob, unscheduleJob } from "../cron/scheduler.js";
+import { DefaultResolver } from "../customization/resolver.js";
+import { createProjector } from "../customization/projectors/index.js";
+import { LOG_PREFIX } from "../identity.js";
 
 export const TOOL_REGISTRY: { name: string; description: string; category: string }[] = [
   { name: "create_worker_session", description: "Create a new worker session in a specific directory", category: "workers" },
@@ -102,6 +105,52 @@ export function destroyWorker(workers: Map<string, WorkerInfo>, name: string): v
   db.prepare(`DELETE FROM worker_sessions WHERE name = ?`).run(name);
 }
 
+/** Resolve a SessionConfig for a worker using the customization pipeline. */
+async function resolveWorkerConfig(opts: {
+  client: BackendClient;
+  workingDir: string;
+  profile?: string;
+}): Promise<SessionConfig> {
+  const { client, workingDir, profile } = opts;
+
+  try {
+    const resolver = new DefaultResolver();
+    const context = {
+      role: "worker" as const,
+      workingDirectory: workingDir,
+      backendName: client.name,
+      backendCapabilities: client.capabilities,
+      profile,
+    };
+
+    const bundle = await resolver.resolve(context);
+    const projector = createProjector(client.name);
+    const projected = await projector.project(bundle, context);
+
+    // Run side effects (e.g., skill syncing)
+    if (projected.sideEffects) {
+      try { await projected.sideEffects(); } catch { /* non-fatal */ }
+    }
+
+    return {
+      model: config.copilotModel,
+      configDir: SESSIONS_DIR,
+      workingDirectory: workingDir,
+      ...projected.sessionConfig,
+      // Workers never get custom tools — they use the backend's native tools
+      tools: undefined,
+    };
+  } catch (err) {
+    console.log(`${LOG_PREFIX} Worker customization resolution failed (non-fatal): ${err instanceof Error ? err.message : err}`);
+    // Fallback to minimal config
+    return {
+      model: config.copilotModel,
+      configDir: SESSIONS_DIR,
+      workingDirectory: workingDir,
+    };
+  }
+}
+
 export function createTools(deps: ToolDeps): Tool<any>[] {
   const tools: Tool<any>[] = [
     defineTool("create_worker_session", {
@@ -113,6 +162,7 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
         name: z.string().describe("Short descriptive name for the session, e.g. 'auth-fix'"),
         working_dir: z.string().optional().describe("Absolute path to the directory to work in (defaults to daemon working directory)"),
         initial_prompt: z.string().optional().describe("Optional initial prompt to send to the worker"),
+        profile: z.string().optional().describe("Optional customization profile name for the worker (loads specific skills/MCP/instructions)"),
       }),
       handler: async (args) => {
         if (deps.workers.has(args.name)) {
@@ -134,11 +184,14 @@ export function createTools(deps: ToolDeps): Tool<any>[] {
           return `Worker limit reached (${MAX_CONCURRENT_WORKERS}). Active: ${names}. Kill a session first.`;
         }
 
-        const session = await deps.client.createSession({
-          model: config.copilotModel,
-          configDir: SESSIONS_DIR,
-          workingDirectory: workingDir,
+        // Resolve worker customizations via the resolver+projector pipeline
+        const workerSessionConfig = await resolveWorkerConfig({
+          client: deps.client,
+          workingDir,
+          profile: args.profile,
         });
+
+        const session = await deps.client.createSession(workerSessionConfig);
 
         const worker: WorkerInfo = {
           name: args.name,

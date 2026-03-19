@@ -35,6 +35,23 @@ export interface SessionConfig {
     backgroundCompactionThreshold: number;
     bufferExhaustionThreshold: number;
   };
+  /** Append-only instructions to add to each SDK's built-in system prompt. */
+  appendInstructions?: string;
+  /** Dynamic tool definitions for backends that support them (Codex dynamicTools). */
+  dynamicTools?: DynamicToolSpec[];
+  /** Skills to disable by name (Copilot SDK). */
+  disabledSkills?: string[];
+  /** Custom sub-agent definitions (Copilot SDK). */
+  customAgents?: unknown[];
+  /** Session lifecycle hooks (Copilot SDK). */
+  hooks?: unknown;
+}
+
+/** Codex-compatible dynamic tool specification. */
+export interface DynamicToolSpec {
+  name: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
 }
 
 export interface SessionEvents {

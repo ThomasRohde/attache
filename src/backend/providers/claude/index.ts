@@ -7,13 +7,14 @@ import type {
   SessionConfig,
 } from "../../types.js";
 import { ClaudeBackendSession, type ClaudeQueryOptions } from "./session.js";
+import { bridgeToolsForClaude } from "./tool-bridge.js";
 import { CLAUDE_MODELS } from "./models.js";
 import { LOG_PREFIX } from "../../../identity.js";
 import { ATTACHE_ENV_PATH } from "../../../paths.js";
 import { readFileSync } from "fs";
 
 const DEFAULT_ALLOWED_TOOLS = [
-  "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch",
+  "Read", "Write", "Edit", "Bash", "Glob", "Grep", "WebSearch", "WebFetch", "Skill",
 ];
 
 /**
@@ -25,15 +26,15 @@ const DEFAULT_ALLOWED_TOOLS = [
 export class ClaudeBackendClient implements BackendClient {
   readonly name = "claude";
   readonly capabilities: BackendCapabilities = {
-    customTools: false,
+    customTools: true,        // Via createSdkMcpServer in-process MCP tools
     sessionResume: true,
     infiniteSessions: false,
     persistentClient: false,
     modelListing: true,
-    skillDirectories: false,
+    skillDirectories: true,   // SDK supports via settingSources
     structuredOutput: false,
     machineSessionDiscovery: false,
-    vision: false,
+    vision: true,             // SDK supports image reading
   };
 
   private state: ConnectionState = "disconnected";
@@ -120,15 +121,42 @@ export class ClaudeBackendClient implements BackendClient {
       console.log(`${LOG_PREFIX} Cached ${this.cachedModels.length} models from Claude SDK`);
     };
 
-    if (sessionConfig.systemMessage !== undefined) {
+    opts.settingSources = ['user', 'project'];
+
+    if (sessionConfig.appendInstructions !== undefined) {
+      opts.systemPrompt = {
+        type: 'preset' as const,
+        preset: 'claude_code' as const,
+        append: sessionConfig.appendInstructions,
+      };
+    } else if (sessionConfig.systemMessage !== undefined) {
       opts.systemPrompt = sessionConfig.systemMessage;
     }
     if (sessionConfig.workingDirectory !== undefined) {
       opts.cwd = sessionConfig.workingDirectory;
     }
-    if (sessionConfig.mcpServers !== undefined) {
-      // Pass MCP configs through as-is — the Claude SDK accepts stdio, http, and sse types
-      opts.mcpServers = sessionConfig.mcpServers as Record<string, any>;
+
+    // Start with any configured MCP servers
+    const mcpServers: Record<string, any> = sessionConfig.mcpServers
+      ? { ...(sessionConfig.mcpServers as Record<string, any>) }
+      : {};
+
+    // Bridge Copilot SDK tools into an in-process MCP server
+    if (sessionConfig.tools?.length) {
+      try {
+        const { mcpServer, allowedToolNames } = bridgeToolsForClaude(
+          sessionConfig.tools as import("../copilot/tool-bridge.js").Tool<any>[],
+        );
+        mcpServers[mcpServer.name] = mcpServer;
+        opts.allowedTools = [...opts.allowedTools, ...allowedToolNames];
+        console.log(`${LOG_PREFIX} Bridged ${allowedToolNames.length} tools to Claude MCP server '${mcpServer.name}'`);
+      } catch (err) {
+        console.error(`${LOG_PREFIX} Failed to bridge tools to Claude MCP: ${err instanceof Error ? err.message : err}`);
+      }
+    }
+
+    if (Object.keys(mcpServers).length > 0) {
+      opts.mcpServers = mcpServers;
     }
 
     return opts;

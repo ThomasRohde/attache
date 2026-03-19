@@ -35,6 +35,7 @@ export class CodexBackendSession implements BackendSession {
     private readonly client: CodexBackendClient,
     private readonly config: SessionConfig,
     resumeThreadId?: string,
+    private readonly dynamicToolHandler?: (toolName: string, args: any) => Promise<{ success: boolean; contentItems: Array<{ type: string; text?: string }> }>,
   ) {
     this._threadId = resumeThreadId || crypto.randomUUID();
     this._isResuming = !!resumeThreadId;
@@ -58,11 +59,6 @@ export class CodexBackendSession implements BackendSession {
       await this.ensureThread();
     }
 
-    // Prepend system message to first turn's prompt
-    let effectivePrompt = prompt;
-    if (this._turnCount === 0 && this.config.systemMessage) {
-      effectivePrompt = `[System Instructions]\n${this.config.systemMessage}\n[End System Instructions]\n\n${prompt}`;
-    }
     this._turnCount++;
     this._resultText = "";
 
@@ -81,7 +77,7 @@ export class CodexBackendSession implements BackendSession {
       // Send turn/start
       this.client.sendRpc("turn/start", {
         threadId: this._threadId,
-        input: [{ type: "text", text: effectivePrompt, text_elements: [] }],
+        input: [{ type: "text", text: prompt, text_elements: [] }],
         model: this.config.model,
         approvalPolicy: "never",
         effort: "medium",
@@ -114,6 +110,7 @@ export class CodexBackendSession implements BackendSession {
     await this.abort();
     this._handlers.clear();
     this.client.unregisterThread(this._threadId);
+    this.client.unregisterDynamicToolHandler(this._threadId);
   }
 
   // -- Internal --
@@ -145,6 +142,9 @@ export class CodexBackendSession implements BackendSession {
         sandbox: "workspace-write",
         experimentalRawEvents: false,
         persistExtendedHistory: false,
+        ...(this.config.appendInstructions ? { baseInstructions: this.config.appendInstructions } : {}),
+        ...(this.config.systemMessage ? { developerInstructions: this.config.systemMessage } : {}),
+        ...(this.config.dynamicTools?.length ? { dynamicTools: this.config.dynamicTools } : {}),
       }) as any;
       if (result?.thread?.id) {
         this.reregisterThread(result.thread.id);
@@ -152,16 +152,24 @@ export class CodexBackendSession implements BackendSession {
     }
 
     this._threadStarted = true;
+
+    if (this.dynamicToolHandler) {
+      this.client.registerDynamicToolHandler(this._threadId, this.dynamicToolHandler);
+    }
   }
 
   /** Update thread ID if the server assigned a different one. */
   private reregisterThread(newId: string): void {
     if (newId !== this._threadId) {
       this.client.unregisterThread(this._threadId);
+      this.client.unregisterDynamicToolHandler(this._threadId);
       this._threadId = newId;
       this.client.registerThread(this._threadId, (method, params) => {
         this.handleNotification(method, params);
       });
+      if (this.dynamicToolHandler) {
+        this.client.registerDynamicToolHandler(this._threadId, this.dynamicToolHandler);
+      }
     }
   }
 
@@ -202,6 +210,11 @@ export class CodexBackendSession implements BackendSession {
             toolCallId: item.id || crypto.randomUUID(),
             toolName: `mcp:${item.server}/${item.tool}`,
           });
+        } else if (item.type === "dynamicToolCall") {
+          this.emit("tool.execution_start", {
+            toolCallId: item.id || crypto.randomUUID(),
+            toolName: `dynamic:${item.name || "unknown"}`,
+          });
         }
         break;
       }
@@ -226,6 +239,11 @@ export class CodexBackendSession implements BackendSession {
           this.emit("tool.execution_complete", {
             toolCallId: item.id || "",
             result: { content: item.result?.text || item.error?.message || "done" },
+          });
+        } else if (item.type === "dynamicToolCall") {
+          this.emit("tool.execution_complete", {
+            toolCallId: item.id || "",
+            result: { content: item.result?.text || "done" },
           });
         } else if (item.type === "agentMessage" && typeof item.text === "string") {
           this._resultText = item.text;

@@ -142,6 +142,9 @@ export const config = {
   get openaiApiKey(): string | undefined {
     return raw.OPENAI_API_KEY;
   },
+  get profile(): string | undefined {
+    return getEnvValue("ATTACHE_PROFILE") || undefined;
+  },
 };
 
 function serializeEnvValue(value: string): string {

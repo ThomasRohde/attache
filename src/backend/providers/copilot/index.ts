@@ -107,7 +107,11 @@ export class CopilotBackendClient implements BackendClient {
       onPermissionRequest: approveAll,
     };
 
-    if (config.systemMessage !== undefined) {
+    // System message: prefer appendInstructions (append mode) when provided,
+    // fall back to full replacement via systemMessage for backward compat.
+    if (config.appendInstructions !== undefined) {
+      sdkConfig.systemMessage = { mode: "append", content: config.appendInstructions };
+    } else if (config.systemMessage !== undefined) {
       sdkConfig.systemMessage = { mode: "replace", content: config.systemMessage };
     }
     if (config.streaming !== undefined) {
@@ -128,8 +132,17 @@ export class CopilotBackendClient implements BackendClient {
     if (config.skillDirectories !== undefined) {
       sdkConfig.skillDirectories = config.skillDirectories;
     }
+    if (config.disabledSkills !== undefined) {
+      sdkConfig.disabledSkills = config.disabledSkills;
+    }
     if (config.infiniteSessions !== undefined) {
       sdkConfig.infiniteSessions = config.infiniteSessions;
+    }
+    if (config.customAgents !== undefined) {
+      sdkConfig.customAgents = config.customAgents;
+    }
+    if (config.hooks !== undefined) {
+      sdkConfig.hooks = config.hooks;
     }
 
     return sdkConfig;

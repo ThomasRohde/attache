@@ -1,13 +1,16 @@
-import type { Attachment, BackendClient, BackendSession } from "../backend/types.js";
+import type { Attachment, BackendClient, BackendSession, SessionConfig } from "../backend/types.js";
 import { resetBackendClient, getDefaultModelForProvider } from "../backend/registry.js";
 import { createTools, TOOL_REGISTRY, type WorkerInfo } from "./tools.js";
-import { getOrchestratorSystemMessage } from "./system-message.js";
+import { getOrchestratorSystemMessage, getAttacheAppendInstructions } from "./system-message.js";
 import { config, DEFAULT_MODEL } from "../config.js";
 import { loadMcpConfig } from "./mcp-config.js";
 import { getSkillDirectories, getSkillContentForSystemMessage } from "./skills.js";
 import { getDb, logConversation, getState, setState, deleteState, getMemorySummary, getRecentConversation } from "../store/db.js";
 import { SESSIONS_DIR } from "../paths.js";
 import { LOG_PREFIX } from "../identity.js";
+import { DefaultResolver } from "../customization/resolver.js";
+import { createProjector } from "../customization/projectors/index.js";
+import type { ResolutionContext } from "../customization/types.js";
 
 const MAX_RETRIES = 3;
 const RECONNECT_DELAYS_MS = [1_000, 3_000, 10_000];
@@ -19,7 +22,7 @@ const ORCHESTRATOR_BACKEND_KEY = "orchestrator_backend";
 export type MessageSource =
   | { type: "telegram"; chatId: number; messageId: number }
   | { type: "tui"; connectionId: string }
-  | { type: "background" };
+  | { type: "background"; originChannel?: "telegram" | "tui" };
 
 export type MessageCallback = (text: string, done: boolean) => void;
 
@@ -101,28 +104,84 @@ export function getCurrentSourceChannel(): "telegram" | "tui" | undefined {
   return currentSourceChannel;
 }
 
-function getSessionConfig() {
-  const tools = createTools({
+function getTools() {
+  return createTools({
     client: backendClient!,
     workers,
     onWorkerComplete: feedBackgroundResult,
   });
-  const mcpServers = loadMcpConfig();
-  const skillDirectories = getSkillDirectories();
-  return { tools, mcpServers, skillDirectories };
 }
 
-/** Feed a background worker result into the orchestrator as a new turn. */
+/** Build a full SessionConfig using the resolver+projector pipeline. */
+async function resolveSessionConfig(opts: {
+  memorySummary?: string;
+}): Promise<{ sessionConfig: SessionConfig; sideEffects?: () => Promise<void> }> {
+  const client = backendClient!;
+  const resolver = new DefaultResolver();
+  const context: ResolutionContext = {
+    role: "orchestrator",
+    backendName: client.name,
+    backendCapabilities: client.capabilities,
+    memorySummary: opts.memorySummary,
+    profile: config.profile,
+  };
+
+  const bundle = await resolver.resolve(context);
+  const projector = createProjector(client.name);
+  const projected = await projector.project(bundle, context);
+
+  // Tools have runtime dependencies — create them here and merge into projected config
+  const tools = getTools();
+  const modelToUse = config.copilotModel;
+
+  const sessionConfig: SessionConfig = {
+    model: modelToUse,
+    configDir: SESSIONS_DIR,
+    streaming: true,
+    tools: client.capabilities.customTools ? tools : undefined,
+    ...projected.sessionConfig,
+  };
+
+  // For Copilot, the projector builds systemMessage but doesn't know runtime config.
+  // Enrich it with the runtime options.
+  if (client.name === "copilot" && !sessionConfig.appendInstructions) {
+    const skillContent = client.capabilities.skillDirectories
+      ? undefined
+      : getSkillContentForSystemMessage() || undefined;
+    sessionConfig.systemMessage = getOrchestratorSystemMessage(opts.memorySummary, {
+      selfEditEnabled: config.selfEditEnabled,
+      assistantDisplayName: config.assistantLabel,
+      backendName: client.name,
+      apiPort: config.apiPort,
+      skillContent,
+    });
+  } else if (sessionConfig.appendInstructions) {
+    // Non-Copilot append mode — enrich with runtime config
+    sessionConfig.appendInstructions = getAttacheAppendInstructions(opts.memorySummary, {
+      selfEditEnabled: config.selfEditEnabled,
+      assistantDisplayName: config.assistantLabel,
+      backendName: client.name,
+      apiPort: config.apiPort,
+      includeToolDocs: client.capabilities.customTools,
+    });
+  }
+
+  return { sessionConfig, sideEffects: projected.sideEffects };
+}
+
+/** Feed a background worker result into the orchestrator as a new turn.
+ *  The response is routed to the channel that created the worker (GUI or Telegram),
+ *  so it appears inline in the user's conversation — not in a separate tab. */
 export function feedBackgroundResult(workerName: string, result: string): void {
   const worker = workers.get(workerName);
   if (!worker || worker.cancelled) {
     return;
   }
-  const channel = worker?.originChannel;
+  const channel = worker?.originChannel ?? "tui";
   const prompt = `[Background task completed] Worker '${workerName}' finished:\n\n${result}`;
   sendToOrchestrator(
     prompt,
-    { type: "background" },
+    { type: "background", originChannel: channel },
     (_text, done) => {
       if (done && proactiveNotifyFn) {
         proactiveNotifyFn(_text, channel);
@@ -245,43 +304,29 @@ async function ensureOrchestratorSession(): Promise<BackendSession> {
 /** Internal: actually create or resume a session (not concurrency-safe — use ensureOrchestratorSession). */
 async function createOrResumeSession(): Promise<BackendSession> {
   const client = await ensureClient();
-  const { tools, mcpServers, skillDirectories } = getSessionConfig();
   const memorySummary = getMemorySummary();
   const modelToUse = config.copilotModel;
 
-  // For backends without native skill directory support, inject skill content
-  // into the system message so the AI can still follow skill instructions.
-  const skillContent = client.capabilities.skillDirectories
-    ? undefined
-    : getSkillContentForSystemMessage() || undefined;
+  // Resolve customizations via the resolver+projector pipeline
+  const { sessionConfig, sideEffects } = await resolveSessionConfig({
+    memorySummary: memorySummary || undefined,
+  });
 
-  const infiniteSessions = client.capabilities.infiniteSessions ? {
-    enabled: true,
-    backgroundCompactionThreshold: 0.80,
-    bufferExhaustionThreshold: 0.95,
-  } : undefined;
+  // Run side effects (e.g., skill syncing to backend-specific directories)
+  if (sideEffects) {
+    try {
+      await sideEffects();
+    } catch (err) {
+      console.log(`${LOG_PREFIX} Customization side effects failed (non-fatal): ${err instanceof Error ? err.message : err}`);
+    }
+  }
 
   // Try to resume a previous session
   const savedSessionId = getState(ORCHESTRATOR_SESSION_KEY);
   if (savedSessionId && client.capabilities.sessionResume) {
     try {
       console.log(`${LOG_PREFIX} Resuming orchestrator session ${savedSessionId.slice(0, 8)} with model ${modelToUse}…`);
-      const session = await client.resumeSession(savedSessionId, {
-        model: modelToUse,
-        configDir: SESSIONS_DIR,
-        streaming: true,
-        systemMessage: getOrchestratorSystemMessage(memorySummary || undefined, {
-          selfEditEnabled: config.selfEditEnabled,
-          assistantDisplayName: config.assistantLabel,
-          backendName: backendClient!.name,
-          apiPort: config.apiPort,
-          skillContent,
-        }),
-        tools: client.capabilities.customTools ? tools : undefined,
-        mcpServers,
-        skillDirectories: client.capabilities.skillDirectories ? skillDirectories : undefined,
-        infiniteSessions,
-      });
+      const session = await client.resumeSession(savedSessionId, sessionConfig);
       console.log(`${LOG_PREFIX} Resumed orchestrator session successfully (model: ${modelToUse})`);
       return session;
     } catch (err) {
@@ -292,21 +337,7 @@ async function createOrResumeSession(): Promise<BackendSession> {
 
   // Create a fresh session
   console.log(`${LOG_PREFIX} Creating new orchestrator session with model ${modelToUse}`);
-  const session = await client.createSession({
-    model: modelToUse,
-    configDir: SESSIONS_DIR,
-    streaming: true,
-    systemMessage: getOrchestratorSystemMessage(memorySummary || undefined, {
-      selfEditEnabled: config.selfEditEnabled,
-      assistantDisplayName: config.assistantLabel,
-      backendName: backendClient!.name,
-      apiPort: config.apiPort,
-    }),
-    tools: client.capabilities.customTools ? tools : undefined,
-    mcpServers,
-    skillDirectories: client.capabilities.skillDirectories ? skillDirectories : undefined,
-    infiniteSessions,
-  });
+  const session = await client.createSession(sessionConfig);
 
   // Persist the session ID for future restarts
   setState(ORCHESTRATOR_SESSION_KEY, session.sessionId);
@@ -331,7 +362,8 @@ async function createOrResumeSession(): Promise<BackendSession> {
 
 export async function initOrchestrator(client: BackendClient): Promise<void> {
   backendClient = client;
-  const { mcpServers, skillDirectories } = getSessionConfig();
+  const mcpServers = loadMcpConfig();
+  const skillDirectories = getSkillDirectories();
 
   // If the backend changed since last run, clear saved session and reset model
   // to the new provider's default. Sessions are not portable between backends.
@@ -367,6 +399,7 @@ export async function initOrchestrator(client: BackendClient): Promise<void> {
   }
 
   console.log(`${LOG_PREFIX} Backend: ${client.name}`);
+  console.log(`${LOG_PREFIX} System message mode: ${client.name === "copilot" || !client.capabilities.skillDirectories ? "replace" : "append (preset + Attache instructions)"}`);
   console.log(`${LOG_PREFIX} Loading ${Object.keys(mcpServers).length} MCP server(s): ${Object.keys(mcpServers).join(", ") || "(none)"}`);
   console.log(`${LOG_PREFIX} Skill directories: ${skillDirectories.join(", ") || "(none)"}`);
   console.log(`${LOG_PREFIX} Persistent session mode — conversation history maintained by backend`);
@@ -477,9 +510,12 @@ export async function sendToOrchestrator(
   callback: MessageCallback,
   attachments?: Attachment[]
 ): Promise<void> {
+  // Background messages route to the channel that created the worker,
+  // so responses appear inline in the user's conversation.
   const sourceLabel =
     source.type === "telegram" ? "telegram" :
-    source.type === "tui" ? "tui" : "background";
+    source.type === "tui" ? "tui" :
+    source.originChannel ?? "tui"; // background → origin channel (default tui)
   logMessage("in", sourceLabel, prompt);
 
   // Tag the prompt with its source channel
